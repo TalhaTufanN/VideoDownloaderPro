@@ -1,0 +1,12 @@
+__pycache__/
+*.pyc
+.env
+settings.json
+history.json
+venv/
+env/
+.idea/
+.vscode/
+build/
+dist/
+*.spec
