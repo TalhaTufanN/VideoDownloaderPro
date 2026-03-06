@@ -8,5 +8,6 @@ env/
 .idea/
 .vscode/
 build/
-dist/
+dist/*
+!dist/VideoDownloaderPro.exe
 *.spec

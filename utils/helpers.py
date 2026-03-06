@@ -4,8 +4,12 @@ import json
 import subprocess
 from datetime import datetime
 
-SETTINGS_FILE = 'settings.json'
-HISTORY_FILE = 'history.json'
+APP_DIR = os.path.join(os.path.expanduser('~'), '.VideoDownloaderPro')
+if not os.path.exists(APP_DIR):
+    os.makedirs(APP_DIR, exist_ok=True)
+
+SETTINGS_FILE = os.path.join(APP_DIR, 'settings.json')
+HISTORY_FILE = os.path.join(APP_DIR, 'history.json')
 
 def resource_path(relative_path):
     try:

@@ -9,6 +9,8 @@ from io import BytesIO
 from PIL import Image
 from core.downloader import YouTubeDownloader
 from utils.helpers import resource_path, load_settings, set_setting, get_setting, load_history, add_to_history, check_ffmpeg_installed
+from utils.updater import check_for_updates, perform_update, get_current_version
+
 class DownloaderApp(ctk.CTk):
     def __init__(self):
         super().__init__()
@@ -65,6 +67,28 @@ class DownloaderApp(ctk.CTk):
             self.var_mp4.set(True)
 
         self.show_frame("home")
+        
+        # Check for updates in background
+        threading.Thread(target=self._check_updates_async, daemon=True).start()
+
+    def _check_updates_async(self):
+        update_available, new_version = check_for_updates()
+        if update_available:
+            self.after(2000, self._prompt_update, new_version)
+
+    def _prompt_update(self, new_version):
+        current = get_current_version()
+        answer = messagebox.askyesno(
+            "Yeni Güncelleme Mevcut!",
+            f"Video Downloader Pro'nun yeni bir sürümü ({new_version}) bulundu.\n(Mevcut Sürümünüz: {current})\n\nŞimdi otomatik olarak güncellenip yeniden başlatılmasını ister misiniz?"
+        )
+        if answer:
+            success, msg = perform_update()
+            if success:
+                messagebox.showinfo("Güncelleniyor", msg)
+                self.destroy()
+            else:
+                messagebox.showerror("Güncelleme Hatası", msg)
 
     def _build_sidebar(self):
         self.sidebar = ctk.CTkFrame(self, width=220, corner_radius=0, fg_color=("#f0f0f0", "#15171e"))
@@ -236,7 +260,7 @@ class DownloaderApp(ctk.CTk):
         status2_frame = ctk.CTkFrame(self.right_sidebar, fg_color="transparent")
         status2_frame.pack(fill="x", padx=25, pady=5)
         ctk.CTkLabel(status2_frame, text="Sürüm:", text_color=("#555555", "#a0a0ae")).pack(side="left")
-        ctk.CTkLabel(status2_frame, text="v1.0.0").pack(side="right")
+        ctk.CTkLabel(status2_frame, text=f"v{get_current_version()}").pack(side="right")
 
         self.success_downloads = 0
         self.error_downloads = 0
