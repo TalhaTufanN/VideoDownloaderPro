@@ -3,13 +3,10 @@ import sys
 import subprocess
 import requests
 import tempfile
-import time
-from urllib.request import urlopen
 from packaging.version import parse as parse_version
 
 GITHUB_REPO = "TalhaTufanN/VideoDownloaderPro"
-VERSION_URL = f"https://raw.githubusercontent.com/{GITHUB_REPO}/main/version.txt"
-EXE_URL = f"https://github.com/{GITHUB_REPO}/raw/main/dist/VideoDownloaderPro.exe"
+GITHUB_API_URL = f"https://api.github.com/repos/{GITHUB_REPO}/releases/latest"
 
 def get_current_version():
     try:
@@ -20,29 +17,40 @@ def get_current_version():
         print(f"Sürüm bilgisi okunamadı: {e}")
         return "1.0.0"
 
-def get_latest_version():
+def get_latest_release_info():
+    """Returns (latest_version_tag_string, download_url)"""
     try:
-        response = requests.get(VERSION_URL, timeout=5)
+        response = requests.get(GITHUB_API_URL, timeout=10)
         if response.status_code == 200:
-            return response.text.strip()
+            data = response.json()
+            tag_name = data.get("tag_name", "").lstrip('v') # Remove 'v' if present like v1.0.1
+            
+            # Find the exe asset
+            download_url = None
+            for asset in data.get("assets", []):
+                if asset.get("name", "").endswith(".exe"):
+                    download_url = asset.get("browser_download_url")
+                    break
+            
+            return tag_name, download_url
     except Exception as e:
-        print(f"Güncel sürüm kontrol edilemedi: {e}")
-    return None
+        print(f"Güncel sürüm API'den kontrol edilemedi: {e}")
+    return None, None
 
 def check_for_updates():
-    """Returns (update_available: bool, latest_version: str)"""
+    """Returns (update_available: bool, latest_version: str, download_url: str)"""
     current = get_current_version()
-    latest = get_latest_version()
+    latest_tag, download_url = get_latest_release_info()
     
-    if latest and current:
+    if latest_tag and current and download_url:
         try:
-            if parse_version(latest) > parse_version(current):
-                return True, latest
+            if parse_version(latest_tag) > parse_version(current):
+                return True, latest_tag, download_url
         except Exception as e:
             print(f"Sürüm karşılaştırma hatası: {e}")
-    return False, current
+    return False, current, None
 
-def perform_update():
+def perform_update(download_url):
     """Downloads the latest executable and spawns a batch script to replace the current one."""
     try:
         current_exe = sys.executable
@@ -55,7 +63,7 @@ def perform_update():
         downloaded_exe_path = os.path.join(temp_dir, "VideoDownloaderPro_update.exe")
 
         print("Güncelleme indiriliyor...")
-        response = requests.get(EXE_URL, stream=True, timeout=30)
+        response = requests.get(download_url, stream=True, timeout=60)
         if response.status_code != 200:
             return False, "Güncelleme dosyası indirilemedi."
 

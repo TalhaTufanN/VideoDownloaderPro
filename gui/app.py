@@ -72,18 +72,18 @@ class DownloaderApp(ctk.CTk):
         threading.Thread(target=self._check_updates_async, daemon=True).start()
 
     def _check_updates_async(self):
-        update_available, new_version = check_for_updates()
+        update_available, new_version, download_url = check_for_updates()
         if update_available:
-            self.after(2000, self._prompt_update, new_version)
+            self.after(2000, self._prompt_update, new_version, download_url)
 
-    def _prompt_update(self, new_version):
+    def _prompt_update(self, new_version, download_url):
         current = get_current_version()
         answer = messagebox.askyesno(
             "Yeni Güncelleme Mevcut!",
             f"Video Downloader Pro'nun yeni bir sürümü ({new_version}) bulundu.\n(Mevcut Sürümünüz: {current})\n\nŞimdi otomatik olarak güncellenip yeniden başlatılmasını ister misiniz?"
         )
         if answer:
-            success, msg = perform_update()
+            success, msg = perform_update(download_url)
             if success:
                 messagebox.showinfo("Güncelleniyor", msg)
                 self.destroy()
