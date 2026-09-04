@@ -10,6 +10,7 @@ from PIL import Image
 from core.downloader import YouTubeDownloader
 from utils.helpers import resource_path, load_settings, set_setting, get_setting, load_history, add_to_history, check_ffmpeg_installed
 from utils.updater import check_for_updates, perform_update, get_current_version
+from utils.ytdlp_updater import start_background_update, get_active_version
 
 class DownloaderApp(ctk.CTk):
     def __init__(self):
@@ -71,6 +72,11 @@ class DownloaderApp(ctk.CTk):
         # Check for updates in background
         threading.Thread(target=self._check_updates_async, daemon=True).start()
 
+        # yt-dlp (indirme motoru) güncellemesini arka planda kontrol et.
+        # Yeni sürüm indirilirse bir sonraki açılışta etkin olur; kullanıcıya
+        # bilgi verilir. Uygulamayı bloklamaz.
+        start_background_update(on_updated=self._on_ytdlp_updated)
+
     def _check_updates_async(self):
         update_available, new_version, download_url = check_for_updates()
         if update_available:
@@ -89,6 +95,25 @@ class DownloaderApp(ctk.CTk):
                 self.destroy()
             else:
                 messagebox.showerror("Güncelleme Hatası", msg)
+
+    def _on_ytdlp_updated(self, new_version):
+        # Arka plan iş parçacığından çağrılır -> UI thread'ine aktar
+        self.after(0, self._show_ytdlp_updated, new_version)
+
+    def _show_ytdlp_updated(self, new_version):
+        try:
+            self.lbl_ytdlp_version.configure(
+                text=f"{new_version} ✓ (yeniden başlat)",
+                text_color=("#0099cc", "#00e5ff")
+            )
+        except Exception:
+            pass
+        messagebox.showinfo(
+            "İndirme Motoru Güncellendi",
+            f"İndirme motoru (yt-dlp) {new_version} sürümüne güncellendi.\n"
+            "Bu güncelleme, uygulamayı bir sonraki açışınızda otomatik olarak "
+            "etkinleşecek ve olası indirme hatalarını giderecektir."
+        )
 
     def _build_sidebar(self):
         self.sidebar = ctk.CTkFrame(self, width=220, corner_radius=0, fg_color=("#f0f0f0", "#15171e"))
@@ -261,6 +286,13 @@ class DownloaderApp(ctk.CTk):
         status2_frame.pack(fill="x", padx=25, pady=5)
         ctk.CTkLabel(status2_frame, text="Sürüm:", text_color=("#555555", "#a0a0ae")).pack(side="left")
         ctk.CTkLabel(status2_frame, text=f"v{get_current_version()}").pack(side="right")
+
+        # İndirme motoru (yt-dlp) sürümü — otomatik güncellenir
+        status3_frame = ctk.CTkFrame(self.right_sidebar, fg_color="transparent")
+        status3_frame.pack(fill="x", padx=25, pady=5)
+        ctk.CTkLabel(status3_frame, text="Motor Sürümü:", text_color=("#555555", "#a0a0ae")).pack(side="left")
+        self.lbl_ytdlp_version = ctk.CTkLabel(status3_frame, text=f"{get_active_version() or '—'}")
+        self.lbl_ytdlp_version.pack(side="right")
 
         self.success_downloads = 0
         self.error_downloads = 0

@@ -2,6 +2,8 @@ import yt_dlp
 import os
 import time
 
+from utils.helpers import get_ffmpeg_path
+
 class YouTubeDownloader:
     def __init__(self, progress_callback=None, completion_callback=None, error_callback=None, info_callback=None):
         self.progress_callback = progress_callback
@@ -53,12 +55,36 @@ class YouTubeDownloader:
                 'outtmpl': f'{save_path}/%(title)s.%(ext)s',
                 'progress_hooks': [self._hook],
                 'quiet': True,
-                'noprogress': True
+                'noprogress': True,
+                # 403 Forbidden hatalarına karşı dayanıklılık:
+                # YouTube'un varsayılan 'web' istemcisi bazen imzası süresi
+                # dolmuş / PO-token gerektiren medya URL'leri döndürür. Alternatif
+                # oynatıcı istemcileri bu sorunu genellikle atlar.
+                'retries': 10,
+                'fragment_retries': 10,
+                'http_headers': {
+                    'User-Agent': (
+                        'Mozilla/5.0 (Windows NT 10.0; Win64; x64) '
+                        'AppleWebKit/537.36 (KHTML, like Gecko) '
+                        'Chrome/122.0.0.0 Safari/537.36'
+                    )
+                },
             }
+
+            if 'youtube.com' in video_url or 'youtu.be' in video_url:
+                ydl_opts['extractor_args'] = {
+                    'youtube': {'player_client': ['android', 'web_safari', 'web']}
+                }
             
             if mp4_only and not audio_only:
                 ydl_opts['merge_output_format'] = 'mp4'
-            
+
+            # Uygulamayla birlikte gelen (gömülü) ffmpeg varsa onu kullan;
+            # yoksa yt-dlp sistem PATH'indeki ffmpeg'e düşer.
+            ffmpeg_dir = get_ffmpeg_path()
+            if ffmpeg_dir:
+                ydl_opts['ffmpeg_location'] = ffmpeg_dir
+
             with yt_dlp.YoutubeDL(ydl_opts) as ydl:
                 info_dict = ydl.extract_info(video_url, download=False)
                 video_title = info_dict.get('title', 'İsimsiz video')
