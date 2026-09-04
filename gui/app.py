@@ -3,36 +3,56 @@ import tkinter as tk
 from tkinter import filedialog, messagebox
 import threading
 import os
+import sys
+import subprocess
 import webbrowser
+import json
 import requests
 from io import BytesIO
 from PIL import Image
+
 from core.downloader import YouTubeDownloader
-from utils.helpers import resource_path, load_settings, set_setting, get_setting, load_history, add_to_history, check_ffmpeg_installed
+from utils.helpers import (
+    resource_path, load_settings, set_setting, get_setting,
+    load_history, add_to_history, check_ffmpeg_installed, HISTORY_FILE
+)
 from utils.updater import check_for_updates, perform_update, get_current_version
 from utils.ytdlp_updater import start_background_update, get_active_version
+from gui import theme as T
+
 
 class DownloaderApp(ctk.CTk):
     def __init__(self):
         super().__init__()
 
-        # Load Settings
         self.settings = load_settings()
-        theme = self.settings.get('theme', 'Dark')
-        ctk.set_appearance_mode(theme)
+        ctk.set_appearance_mode("Dark")          # Nocturne koyu tema
         ctk.set_default_color_theme("blue")
 
         self.title("Video Downloader Pro")
-        self.geometry("1100x700")
-        self.minsize(950, 600)
-        
+        self.geometry("1200x780")
+        self.minsize(1040, 700)
+        self.configure(fg_color=T.BG)
+
         try:
-            icon_path = resource_path("icon.ico")
-            self.iconbitmap(icon_path)
+            self.iconbitmap(resource_path("icon.ico"))
         except Exception as e:
             print(f"İcon yüklenirken hata: {e}")
 
-        # Core instance
+        # Yazı tipleri
+        fam = T.pick_family()
+        self.f_h2      = ctk.CTkFont(family=fam, size=26, weight="bold")
+        self.f_h3      = ctk.CTkFont(family=fam, size=19, weight="bold")
+        self.f_kicker  = ctk.CTkFont(family=fam, size=12, weight="bold")
+        self.f_body    = ctk.CTkFont(family=fam, size=13)
+        self.f_body_m  = ctk.CTkFont(family=fam, size=13, weight="bold")
+        self.f_small   = ctk.CTkFont(family=fam, size=12)
+        self.f_tiny    = ctk.CTkFont(family=fam, size=11)
+        self.f_stat    = ctk.CTkFont(family=fam, size=26, weight="bold")
+        self.f_btn     = ctk.CTkFont(family=fam, size=14, weight="bold")
+        self.f_brand   = ctk.CTkFont(family=fam, size=14, weight="bold")
+
+        # İndirici çekirdeği
         self.downloader = YouTubeDownloader(
             progress_callback=self.update_progress,
             completion_callback=self.on_download_success,
@@ -40,42 +60,705 @@ class DownloaderApp(ctk.CTk):
             info_callback=self.on_download_info
         )
 
+        # Durum
+        self.success_downloads = 0
+        self.error_downloads = 0
+        self.path_var = tk.StringVar(value=get_setting('last_folder') or "")
+        default_mp4 = self.settings.get('default_mp4', True)
+        self.format_choice = "mp4" if default_mp4 else "both"
+        self.nav_items = {}
+        self.format_cards = {}
+        self._thumb_img = None
+        self.current_save_path = ""
+        self.current_download_type = ""
+
         self.grid_rowconfigure(0, weight=1)
         self.grid_columnconfigure(1, weight=1)
 
         self._build_sidebar()
-        
-        # Frames Container
-        self.frames_container = ctk.CTkFrame(self, fg_color="transparent")
-        self.frames_container.grid(row=0, column=1, sticky="nsew")
-        self.frames_container.grid_rowconfigure(0, weight=1)
-        self.frames_container.grid_columnconfigure(0, weight=1)
 
-        # Initialize Frames
-        self.home_frame = None
-        self.downloads_frame = None
-        self.settings_frame = None
-        self.help_frame = None
+        self.container = ctk.CTkFrame(self, fg_color="transparent")
+        self.container.grid(row=0, column=1, sticky="nsew")
+        self.container.grid_rowconfigure(0, weight=1)
+        self.container.grid_columnconfigure(0, weight=1)
 
-        self._build_home_frame()
-        self._build_downloads_frame()
-        self._build_settings_frame()
-        self._build_help_frame()
-        
-        # Load default UI states based on settings
-        self._load_saved_path()
-        if self.settings.get('default_mp4', True):
-            self.var_mp4.set(True)
+        self.screens = {}
+        self._build_home()
+        self._build_history()
+        self._build_settings()
+        self._build_help()
 
-        self.show_frame("home")
-        
-        # Check for updates in background
+        self.show_screen("home")
+        self._pulse_dot()
+
+        # Kısayol: Enter -> indir
+        self.bind("<Return>", lambda e: self.start_download())
+
+        # Arka plan güncelleme kontrolleri
         threading.Thread(target=self._check_updates_async, daemon=True).start()
-
-        # yt-dlp (indirme motoru) güncellemesini arka planda kontrol et.
-        # Yeni sürüm indirilirse bir sonraki açılışta etkin olur; kullanıcıya
-        # bilgi verilir. Uygulamayı bloklamaz.
         start_background_update(on_updated=self._on_ytdlp_updated)
+
+    # ══════════════════════════════════════════════════════════ helpers ═════
+
+    def _load_logo(self, height=17):
+        """app.png'yi yükler; siyah zeminini saydamlaştırıp oka kırpar ve
+        kenar çubuğundaki vurgu kutusuna sığacak bir CTkImage döndürür."""
+        try:
+            img = Image.open(resource_path('app.png')).convert("RGBA")
+            img.thumbnail((96, 96))               # hız için önce küçült
+            px = img.getdata()
+            img.putdata([(r, g, b, 0) if (r < 45 and g < 45 and b < 45) else (r, g, b, a)
+                         for (r, g, b, a) in px])
+            bbox = img.getbbox()
+            if bbox:
+                img = img.crop(bbox)
+            w, h = img.size
+            size = (max(1, round(w * height / h)), height)
+            return ctk.CTkImage(light_image=img, dark_image=img, size=size)
+        except Exception as e:
+            print(f"Logo yüklenemedi: {e}")
+            return None
+
+    def _card(self, parent, **kw):
+        opts = dict(fg_color=T.PANEL, corner_radius=T.RADIUS_MD,
+                    border_width=1, border_color=T.BORDER)
+        opts.update(kw)
+        return ctk.CTkFrame(parent, **opts)
+
+    def _kicker(self, parent, text):
+        return ctk.CTkLabel(parent, text=text.upper(), font=self.f_kicker,
+                            text_color=T.N500)
+
+    def _tag(self, parent, text, fg_color, text_color):
+        """Rozet: iç boşluğu olan yuvarlatılmış küçük etiket."""
+        wrap = ctk.CTkFrame(parent, fg_color=fg_color, corner_radius=6)
+        lbl = ctk.CTkLabel(wrap, text=text, font=self.f_tiny, text_color=text_color)
+        lbl.pack(padx=9, pady=2)
+        wrap._label = lbl
+        return wrap
+
+    # ══════════════════════════════════════════════════════════ sidebar ═════
+
+    def _build_sidebar(self):
+        bar = ctk.CTkFrame(self, width=236, corner_radius=0, fg_color=T.SIDEBAR_BG)
+        bar.grid(row=0, column=0, sticky="nsew")
+        bar.grid_propagate(False)
+        bar.grid_rowconfigure(2, weight=1)
+
+        # Marka
+        brand = ctk.CTkFrame(bar, fg_color="transparent")
+        brand.grid(row=0, column=0, sticky="ew", padx=20, pady=(24, 30))
+        logo = ctk.CTkFrame(brand, width=30, height=30, corner_radius=8,
+                            fg_color=T.ACCENT_900, border_width=1, border_color=T.ACCENT_800)
+        logo.pack(side="left", padx=(0, 11))
+        logo.pack_propagate(False)
+        self._logo_img = self._load_logo()
+        if self._logo_img is not None:
+            ctk.CTkLabel(logo, text="", image=self._logo_img).pack(expand=True)
+        else:
+            ctk.CTkLabel(logo, text="▼", font=ctk.CTkFont(size=13, weight="bold"),
+                         text_color=T.ACCENT_300).pack(expand=True)
+        txt = ctk.CTkFrame(brand, fg_color="transparent")
+        txt.pack(side="left")
+        ctk.CTkLabel(txt, text="Video Downloader", font=self.f_brand,
+                     text_color=T.TEXT).pack(anchor="w")
+        ctk.CTkLabel(txt, text="P R O", font=self.f_tiny,
+                     text_color=T.ACCENT_400).pack(anchor="w")
+
+        # Menü
+        menu = ctk.CTkFrame(bar, fg_color="transparent")
+        menu.grid(row=1, column=0, sticky="ew", padx=12)
+        items = [
+            ("home",     "🏠", "Ana Sayfa"),
+            ("history",  "🕒", "İndirme Geçmişi"),
+            ("settings", "⚙",  "Ayarlar"),
+            ("help",     "❓", "Yardım"),
+        ]
+        for key, icon, label in items:
+            self._make_nav_item(menu, key, icon, label)
+
+        # Alt: motor durumu
+        footer = ctk.CTkFrame(bar, fg_color="transparent")
+        footer.grid(row=3, column=0, sticky="ew", padx=20, pady=(0, 22))
+        row = ctk.CTkFrame(footer, fg_color="transparent")
+        row.pack(anchor="w")
+        self.dot = ctk.CTkLabel(row, text="●", font=ctk.CTkFont(size=10),
+                                text_color=T.ACCENT_400)
+        self.dot.pack(side="left", padx=(0, 7))
+        eng = get_active_version() or "—"
+        ctk.CTkLabel(row, text=f"Motor aktif · yt-dlp {eng}", font=self.f_tiny,
+                     text_color=T.N500).pack(side="left")
+        ctk.CTkLabel(footer, text=f"Sürüm {get_current_version()}", font=self.f_tiny,
+                     text_color=T.N600).pack(anchor="w", pady=(5, 0))
+
+    def _make_nav_item(self, parent, key, icon, label):
+        frame = ctk.CTkFrame(parent, fg_color="transparent", corner_radius=T.RADIUS_MD,
+                             height=40)
+        frame.pack(fill="x", pady=1)
+        frame.pack_propagate(False)
+
+        bar = ctk.CTkFrame(frame, width=3, height=24, corner_radius=2, fg_color=T.ACCENT_400)
+        # accent strip (only visible when active)
+
+        icon_lbl = ctk.CTkLabel(frame, text=icon, font=ctk.CTkFont(size=14),
+                                text_color=T.N400, width=20)
+        icon_lbl.pack(side="left", padx=(14, 10))
+        text_lbl = ctk.CTkLabel(frame, text=label, font=self.f_body, text_color=T.N400)
+        text_lbl.pack(side="left")
+
+        self.nav_items[key] = {"frame": frame, "bar": bar,
+                               "icon": icon_lbl, "text": text_lbl}
+
+        def on_click(_=None):
+            self.show_screen(key)
+
+        def on_enter(_=None):
+            if self.current_screen != key:
+                frame.configure(fg_color=T.N900)
+                text_lbl.configure(text_color=T.N200)
+                icon_lbl.configure(text_color=T.N200)
+
+        def on_leave(_=None):
+            if self.current_screen != key:
+                frame.configure(fg_color="transparent")
+                text_lbl.configure(text_color=T.N400)
+                icon_lbl.configure(text_color=T.N400)
+
+        for w in (frame, icon_lbl, text_lbl):
+            w.bind("<Button-1>", on_click)
+            w.bind("<Enter>", on_enter)
+            w.bind("<Leave>", on_leave)
+
+    def _set_active_nav(self, key):
+        for k, it in self.nav_items.items():
+            active = (k == key)
+            it["frame"].configure(fg_color=T.ACCENT_900 if active else "transparent")
+            it["text"].configure(text_color=T.ACCENT_200 if active else T.N400)
+            it["icon"].configure(text_color=T.ACCENT_300 if active else T.N400)
+            if active:
+                it["bar"].place(x=0, y=8)
+            else:
+                it["bar"].place_forget()
+
+    def _pulse_dot(self):
+        cur = self.dot.cget("text_color")
+        self.dot.configure(text_color=T.ACCENT_800 if cur == T.ACCENT_400 else T.ACCENT_400)
+        self.after(1200, self._pulse_dot)
+
+    # ══════════════════════════════════════════════════════════ routing ═════
+
+    def show_screen(self, name):
+        self.current_screen = name
+        for n, f in self.screens.items():
+            f.grid_forget()
+        self.screens[name].grid(row=0, column=0, sticky="nsew")
+        self._set_active_nav(name)
+        if name == "history":
+            self._refresh_history()
+
+    # ══════════════════════════════════════════════════════════════ home ════
+
+    def _build_home(self):
+        home = ctk.CTkFrame(self.container, fg_color=T.BG, corner_radius=0)
+        home.grid_rowconfigure(0, weight=1)
+        home.grid_columnconfigure(0, weight=1)
+        home.grid_columnconfigure(1, weight=0)
+        self.screens["home"] = home
+
+        content = ctk.CTkScrollableFrame(home, fg_color="transparent")
+        content.grid(row=0, column=0, sticky="nsew", padx=(34, 10), pady=(30, 20))
+        content.grid_columnconfigure(0, weight=1)
+
+        # Başlık
+        head = ctk.CTkFrame(content, fg_color="transparent")
+        head.pack(fill="x", pady=(0, 4), anchor="w")
+        ctk.CTkLabel(head, text="Bir bağlantı yapıştırın", font=self.f_h2,
+                     text_color=T.TEXT).pack(anchor="w")
+        ctk.CTkLabel(head, text="YouTube, Instagram, X ve yt-dlp'nin desteklediği yüzlerce platform.",
+                     font=self.f_body, text_color=T.N500).pack(anchor="w", pady=(4, 0))
+
+        # URL satırı
+        url_row = ctk.CTkFrame(content, fg_color="transparent")
+        url_row.pack(fill="x", pady=(22, 0))
+        wrap = ctk.CTkFrame(url_row, height=52, corner_radius=26, fg_color=T.PANEL,
+                            border_width=1, border_color=T.ACCENT_800)
+        wrap.pack(side="left", fill="x", expand=True, padx=(0, 11))
+        wrap.pack_propagate(False)
+        ctk.CTkLabel(wrap, text="🔗", font=ctk.CTkFont(size=14),
+                     text_color=T.N500).pack(side="left", padx=(18, 0))
+        self.url_entry = ctk.CTkEntry(wrap, placeholder_text="Yapıştırın veya arayın...",
+                                      border_width=0, fg_color="transparent",
+                                      font=self.f_body, text_color=T.TEXT,
+                                      placeholder_text_color=T.N600)
+        self.url_entry.pack(side="left", fill="both", expand=True, padx=12, pady=6)
+        ctk.CTkLabel(wrap, text="Ctrl + V", font=self.f_tiny,
+                     text_color=T.N600).pack(side="right", padx=18)
+        ctk.CTkButton(url_row, text="İNDİR", font=self.f_btn, width=120, height=52,
+                      corner_radius=26, fg_color=T.ACCENT_600, hover_color=T.ACCENT_700,
+                      text_color="#ffffff", command=self.start_download).pack(side="left")
+
+        # Biçim
+        self._kicker(content, "Biçim").pack(anchor="w", pady=(26, 12))
+        fmt = ctk.CTkFrame(content, fg_color="transparent")
+        fmt.pack(fill="x")
+        cards = [
+            ("both", "Video + Ses", "En yüksek kalite"),
+            ("mp4",  "Sadece MP4",  "H.264 + AAC"),
+            ("mp3",  "Sadece Ses",  "MP3 · 320 kbps"),
+        ]
+        for key, title, sub in cards:
+            self._make_format_card(fmt, key, title, sub)
+        self._update_format_cards()
+
+        # Kayıt yeri
+        self._kicker(content, "Kayıt yeri").pack(anchor="w", pady=(26, 12))
+        path_row = ctk.CTkFrame(content, fg_color="transparent")
+        path_row.pack(fill="x")
+        pbox = ctk.CTkFrame(path_row, height=42, corner_radius=T.RADIUS_MD, fg_color=T.PANEL,
+                            border_width=1, border_color=T.BORDER)
+        pbox.pack(side="left", fill="x", expand=True, padx=(0, 10))
+        pbox.pack_propagate(False)
+        ctk.CTkLabel(pbox, text="📁", font=ctk.CTkFont(size=13),
+                     text_color=T.N500).pack(side="left", padx=(14, 8))
+        ctk.CTkLabel(pbox, textvariable=self.path_var, font=self.f_body,
+                     text_color=T.N300, anchor="w").pack(side="left", fill="x", expand=True)
+        ctk.CTkButton(path_row, text="Gözat", font=self.f_body, width=90, height=42,
+                      corner_radius=T.RADIUS_MD, fg_color=T.PANEL, hover_color=T.N900,
+                      border_width=1, border_color=T.BORDER, text_color=T.N200,
+                      command=self.browse_folder).pack(side="left")
+
+        # Aktif indirme
+        act_head = ctk.CTkFrame(content, fg_color="transparent")
+        act_head.pack(fill="x", pady=(26, 12))
+        self._kicker(act_head, "Aktif indirme").pack(side="left")
+        self.lbl_status = ctk.CTkLabel(act_head, text="Hazır", font=self.f_tiny,
+                                       text_color=T.N600)
+        self.lbl_status.pack(side="right")
+
+        card = self._card(content, corner_radius=T.RADIUS_LG)
+        card.pack(fill="x")
+        inner = ctk.CTkFrame(card, fg_color="transparent")
+        inner.pack(fill="x", padx=16, pady=16)
+
+        self.thumb = ctk.CTkFrame(inner, width=130, height=74, corner_radius=T.RADIUS_MD,
+                                  fg_color=T.PANEL_ALT, border_width=1, border_color=T.BORDER)
+        self.thumb.pack(side="left", padx=(0, 16))
+        self.thumb.pack_propagate(False)
+        self.thumb_lbl = ctk.CTkLabel(self.thumb, text="▶", font=ctk.CTkFont(size=22),
+                                      text_color=T.N700)
+        self.thumb_lbl.pack(expand=True)
+
+        info = ctk.CTkFrame(inner, fg_color="transparent")
+        info.pack(side="left", fill="x", expand=True)
+        title_row = ctk.CTkFrame(info, fg_color="transparent")
+        title_row.pack(fill="x")
+        self.lbl_title = ctk.CTkLabel(title_row, text="Bekleniyor...", font=self.f_body_m,
+                                      text_color=T.TEXT, anchor="w")
+        self.lbl_title.pack(side="left", fill="x", expand=True)
+        self.lbl_fmt_tag = self._tag(title_row, "", T.ACCENT_800, T.ACCENT_100)
+        self.progress = ctk.CTkProgressBar(info, height=6, corner_radius=3,
+                                           progress_color=T.ACCENT_500, fg_color=T.N900)
+        self.progress.pack(fill="x", pady=(11, 9))
+        self.progress.set(0)
+        meta = ctk.CTkFrame(info, fg_color="transparent")
+        meta.pack(fill="x")
+        self.lbl_prog = ctk.CTkLabel(meta, text="Hazır", font=self.f_tiny, text_color=T.N500)
+        self.lbl_prog.pack(side="left")
+        self.lbl_speed = ctk.CTkLabel(meta, text="", font=self.f_tiny, text_color=T.N500)
+        self.lbl_speed.pack(side="right")
+
+        # ── Sağ ray ─────────────────────────────────────────────────────────
+        self._build_home_rail(home)
+
+    def _build_home_rail(self, home):
+        rail = ctk.CTkScrollableFrame(home, fg_color=T.RAIL_BG, width=300, corner_radius=0)
+        rail.grid(row=0, column=1, sticky="nsew")
+        rail.grid_columnconfigure(0, weight=1)
+
+        # Oturum
+        self._kicker(rail, "Oturum").pack(anchor="w", padx=6, pady=(14, 12))
+        stats = ctk.CTkFrame(rail, fg_color="transparent")
+        stats.pack(fill="x", padx=6)
+        c1 = self._card(stats)
+        c1.pack(side="left", fill="x", expand=True, padx=(0, 5))
+        self.lbl_success = ctk.CTkLabel(c1, text="0", font=self.f_stat, text_color=T.ACCENT_300)
+        self.lbl_success.pack(anchor="w", padx=14, pady=(14, 0))
+        ctk.CTkLabel(c1, text="Başarılı", font=self.f_tiny, text_color=T.N500).pack(
+            anchor="w", padx=14, pady=(4, 14))
+        c2 = self._card(stats)
+        c2.pack(side="left", fill="x", expand=True, padx=(5, 0))
+        self.lbl_error = ctk.CTkLabel(c2, text="0", font=self.f_stat, text_color=T.N400)
+        self.lbl_error.pack(anchor="w", padx=14, pady=(14, 0))
+        ctk.CTkLabel(c2, text="Hatalı", font=self.f_tiny, text_color=T.N500).pack(
+            anchor="w", padx=14, pady=(4, 14))
+
+        # Sistem durumu
+        self._kicker(rail, "Sistem durumu").pack(anchor="w", padx=6, pady=(28, 12))
+        sysf = ctk.CTkFrame(rail, fg_color="transparent")
+        sysf.pack(fill="x", padx=6)
+        ff_ok, _ = check_ffmpeg_installed()
+        rows = [
+            ("İndirme motoru", "Aktif", T.ACCENT_300),
+            ("FFmpeg", "Kurulu" if ff_ok else "Eksik", T.ACCENT_300 if ff_ok else "#ff6b6b"),
+            ("Motor sürümü", get_active_version() or "—", T.N300),
+            ("Uygulama", f"v{get_current_version()}", T.N300),
+        ]
+        for label, value, color in rows:
+            r = ctk.CTkFrame(sysf, fg_color="transparent")
+            r.pack(fill="x", pady=5)
+            ctk.CTkLabel(r, text=label, font=self.f_body, text_color=T.N500).pack(side="left")
+            ctk.CTkLabel(r, text=value, font=self.f_body, text_color=color).pack(side="right")
+
+        # Motor güncelleme kartı (varsayılan gizli)
+        self.engine_card = ctk.CTkFrame(rail, fg_color=T.ACCENT_900, corner_radius=T.RADIUS_MD,
+                                        border_width=1, border_color=T.ACCENT_800)
+        ctk.CTkLabel(self.engine_card, text="Motor güncellemesi hazır", font=self.f_small,
+                     text_color=T.TEXT, anchor="w").pack(fill="x", padx=15, pady=(15, 5))
+        self.engine_card_body = ctk.CTkLabel(
+            self.engine_card, text="", font=self.f_tiny, text_color=T.ACCENT_200,
+            anchor="w", justify="left", wraplength=230)
+        self.engine_card_body.pack(fill="x", padx=15)
+        ctk.CTkButton(self.engine_card, text="Yeniden başlat", font=self.f_tiny, height=30,
+                      fg_color="transparent", hover_color=T.ACCENT_800, text_color=T.ACCENT_300,
+                      command=self._restart_app).pack(anchor="w", padx=11, pady=(11, 13))
+
+        # Kısayollar
+        ctk.CTkLabel(rail, text="Kısayollar", font=self.f_tiny, text_color=T.N600).pack(
+            anchor="w", padx=6, pady=(28, 2))
+        ctk.CTkLabel(rail, text="Ctrl+V yapıştır · Enter indir", font=self.f_tiny,
+                     text_color=T.N500).pack(anchor="w", padx=6)
+
+    def _make_format_card(self, parent, key, title, sub):
+        card = ctk.CTkFrame(parent, fg_color=T.PANEL, corner_radius=T.RADIUS_MD,
+                            border_width=1, border_color=T.BORDER)
+        card.pack(side="left", padx=(0, 9))
+        t = ctk.CTkLabel(card, text=title, font=self.f_body_m, text_color=T.TEXT)
+        t.pack(anchor="w", padx=17, pady=(13, 0))
+        s = ctk.CTkLabel(card, text=sub, font=self.f_tiny, text_color=T.N500)
+        s.pack(anchor="w", padx=17, pady=(2, 13))
+        self.format_cards[key] = card
+
+        def choose(_=None):
+            self.format_choice = key
+            self._update_format_cards()
+
+        for w in (card, t, s):
+            w.bind("<Button-1>", choose)
+
+    def _update_format_cards(self):
+        for key, card in self.format_cards.items():
+            if key == self.format_choice:
+                card.configure(fg_color=T.ACCENT_900, border_color=T.ACCENT_600)
+            else:
+                card.configure(fg_color=T.PANEL, border_color=T.BORDER)
+
+    # ═══════════════════════════════════════════════════════════ history ════
+
+    def _build_history(self):
+        scr = ctk.CTkFrame(self.container, fg_color=T.BG, corner_radius=0)
+        self.screens["history"] = scr
+
+        head = ctk.CTkFrame(scr, fg_color="transparent")
+        head.pack(fill="x", padx=34, pady=(34, 0))
+        left = ctk.CTkFrame(head, fg_color="transparent")
+        left.pack(side="left")
+        ctk.CTkLabel(left, text="İndirme Geçmişi", font=self.f_h2, text_color=T.TEXT).pack(anchor="w")
+        self.lbl_hist_sub = ctk.CTkLabel(left, text="", font=self.f_body, text_color=T.N500)
+        self.lbl_hist_sub.pack(anchor="w", pady=(4, 0))
+        ctk.CTkButton(head, text="Geçmişi temizle", font=self.f_small, height=34, width=130,
+                      fg_color="transparent", hover_color=T.N900, text_color=T.ACCENT_300,
+                      command=self._clear_history).pack(side="right")
+
+        # Sütun başlıkları
+        header = ctk.CTkFrame(scr, fg_color="transparent")
+        header.pack(fill="x", padx=34, pady=(22, 0))
+        for text, w in (("BAŞLIK", 0), ("BİÇİM", 120), ("TARİH", 150), ("", 110)):
+            lbl = ctk.CTkLabel(header, text=text, font=self.f_tiny, text_color=T.N600,
+                               anchor="w", width=w if w else 0)
+            lbl.pack(side="left", fill="x", expand=(w == 0))
+        ctk.CTkFrame(scr, height=1, fg_color=T.N900).pack(fill="x", padx=34, pady=(6, 0))
+
+        self.hist_scroll = ctk.CTkScrollableFrame(scr, fg_color="transparent")
+        self.hist_scroll.pack(fill="both", expand=True, padx=28, pady=(4, 20))
+
+    def _refresh_history(self):
+        for c in self.hist_scroll.winfo_children():
+            c.destroy()
+        history = load_history()
+        self.lbl_hist_sub.configure(
+            text=f"Bu bilgisayarda tamamlanan {len(history)} işlem." if history
+            else "Henüz tamamlanmış indirme yok.")
+        if not history:
+            ctk.CTkLabel(self.hist_scroll, text="İndirme geçmişi boş.", font=self.f_body,
+                         text_color=T.N500).pack(pady=20)
+            return
+        for item in history:
+            row = ctk.CTkFrame(self.hist_scroll, fg_color="transparent", height=48)
+            row.pack(fill="x", pady=1)
+            ctk.CTkLabel(row, text=item.get('title', 'Bilinmeyen'), font=self.f_body,
+                         text_color=T.N200, anchor="w").pack(
+                side="left", fill="x", expand=True, padx=(6, 8))
+            self._tag(row, item.get('type', '—'), T.N800, T.N100).pack(side="left", padx=(0, 10))
+            ctk.CTkLabel(row, text=item.get('date', ''), font=self.f_small,
+                         text_color=T.N500, width=150, anchor="w").pack(side="left")
+            path = item.get('path', '')
+            ctk.CTkButton(row, text="Klasörü aç", font=self.f_tiny, width=100, height=30,
+                          fg_color="transparent", hover_color=T.N900, text_color=T.ACCENT_300,
+                          command=lambda p=path: self._open_folder(p)).pack(side="right", padx=6)
+            ctk.CTkFrame(self.hist_scroll, height=1, fg_color=T.N900).pack(fill="x")
+
+    def _clear_history(self):
+        if not load_history():
+            return
+        if messagebox.askyesno("Geçmişi temizle",
+                               "Tüm indirme geçmişi silinsin mi?\nDosyalarınız silinmez, yalnızca liste temizlenir."):
+            try:
+                with open(HISTORY_FILE, 'w', encoding='utf-8') as f:
+                    json.dump([], f)
+            except Exception as e:
+                messagebox.showerror("Hata", f"Geçmiş temizlenemedi: {e}")
+            self._refresh_history()
+
+    def _open_folder(self, path):
+        if path and os.path.exists(path):
+            os.startfile(path)
+        else:
+            messagebox.showwarning("Uyarı", "Seçili klasör artık mevcut değil.")
+
+    # ══════════════════════════════════════════════════════════ settings ════
+
+    def _build_settings(self):
+        scr = ctk.CTkFrame(self.container, fg_color=T.BG, corner_radius=0)
+        self.screens["settings"] = scr
+        wrap = ctk.CTkScrollableFrame(scr, fg_color="transparent")
+        wrap.pack(fill="both", expand=True, padx=34, pady=(34, 20))
+
+        ctk.CTkLabel(wrap, text="Ayarlar", font=self.f_h2, text_color=T.TEXT).pack(anchor="w")
+        ctk.CTkLabel(wrap, text="Tercihler settings.json dosyasında saklanır.",
+                     font=self.f_body, text_color=T.N500).pack(anchor="w", pady=(4, 22))
+
+        body = ctk.CTkFrame(wrap, fg_color="transparent")
+        body.pack(fill="x")
+        body.configure(width=720)
+
+        # Tema
+        r1 = self._settings_row(body, "Görünüm teması",
+                                "Uygulama Nocturne koyu teması için ayarlanmıştır.")
+        self.seg_theme = ctk.CTkSegmentedButton(
+            r1, values=["Koyu", "Açık", "Sistem"], command=self._change_theme,
+            font=self.f_small, fg_color=T.SIDEBAR_BG,
+            selected_color=T.ACCENT_700, selected_hover_color=T.ACCENT_600,
+            unselected_color=T.SIDEBAR_BG, unselected_hover_color=T.N900,
+            text_color=T.N300)
+        tr = {"Dark": "Koyu", "Light": "Açık", "System": "Sistem"}
+        self.seg_theme.set(tr.get(self.settings.get('theme', 'Dark'), "Koyu"))
+        self.seg_theme.pack(side="right")
+
+        # MP4 varsayılan
+        r2 = self._settings_row(body, "İndirmelerde \"Sadece MP4\" varsayılan olsun",
+                                "H.264 + AAC doğrudan çekilir, dönüştürme beklemezsiniz.")
+        self.sw_mp4 = ctk.CTkSwitch(r2, text="", width=44, progress_color=T.ACCENT_600,
+                                    fg_color=T.N800, button_color=T.N100,
+                                    command=self._toggle_mp4)
+        if self.settings.get('default_mp4', True):
+            self.sw_mp4.select()
+        self.sw_mp4.pack(side="right")
+
+        # Otomatik klasör
+        r3 = self._settings_row(body, "İndirme bitince klasörü otomatik aç",
+                                "Dosya gezgini tamamlanan indirmenin klasöründe açılır.")
+        self.sw_auto = ctk.CTkSwitch(r3, text="", width=44, progress_color=T.ACCENT_600,
+                                     fg_color=T.N800, button_color=T.N100,
+                                     command=self._toggle_auto)
+        if self.settings.get('auto_open_folder', False):
+            self.sw_auto.select()
+        self.sw_auto.pack(side="right")
+
+    def _settings_row(self, parent, title, sub):
+        card = ctk.CTkFrame(parent, fg_color=T.PANEL, corner_radius=T.RADIUS_MD)
+        card.pack(fill="x", pady=2)
+        inner = ctk.CTkFrame(card, fg_color="transparent")
+        inner.pack(fill="x", padx=18, pady=16)
+        left = ctk.CTkFrame(inner, fg_color="transparent")
+        left.pack(side="left", fill="x", expand=True)
+        ctk.CTkLabel(left, text=title, font=self.f_body_m, text_color=T.TEXT,
+                     anchor="w", justify="left").pack(anchor="w")
+        ctk.CTkLabel(left, text=sub, font=self.f_small, text_color=T.N500,
+                     anchor="w", justify="left").pack(anchor="w", pady=(3, 0))
+        return inner
+
+    def _change_theme(self, choice):
+        mp = {"Koyu": "Dark", "Açık": "Light", "Sistem": "System"}
+        val = mp.get(choice, "Dark")
+        ctk.set_appearance_mode(val)
+        set_setting('theme', val)
+
+    def _toggle_mp4(self):
+        val = bool(self.sw_mp4.get())
+        set_setting('default_mp4', val)
+        self.format_choice = "mp4" if val else "both"
+        self._update_format_cards()
+
+    def _toggle_auto(self):
+        set_setting('auto_open_folder', bool(self.sw_auto.get()))
+
+    # ══════════════════════════════════════════════════════════════ help ════
+
+    def _build_help(self):
+        scr = ctk.CTkFrame(self.container, fg_color=T.BG, corner_radius=0)
+        self.screens["help"] = scr
+        wrap = ctk.CTkScrollableFrame(scr, fg_color="transparent")
+        wrap.pack(fill="both", expand=True, padx=34, pady=(34, 20))
+
+        ctk.CTkLabel(wrap, text="Yardım", font=self.f_h2, text_color=T.TEXT).pack(anchor="w")
+        ctk.CTkLabel(wrap, text="Sistem gereksinimleri ve sık sorulanlar.",
+                     font=self.f_body, text_color=T.N500).pack(anchor="w", pady=(4, 22))
+
+        ff_ok, _ = check_ffmpeg_installed()
+        cards = ctk.CTkFrame(wrap, fg_color="transparent")
+        cards.pack(fill="x")
+        stat_cards = [
+            ("FFmpeg", "Kurulu ve çalışıyor" if ff_ok else "Bulunamadı",
+             T.ACCENT_300 if ff_ok else "#ff6b6b"),
+            ("İndirme motoru", f"yt-dlp {get_active_version() or '—'}", T.N200),
+            ("Uygulama", f"v{get_current_version()} · güncel", T.N200),
+        ]
+        for label, value, color in stat_cards:
+            c = self._card(cards)
+            c.pack(side="left", fill="x", expand=True, padx=(0, 12))
+            ctk.CTkLabel(c, text=label, font=self.f_small, text_color=T.N500).pack(
+                anchor="w", padx=16, pady=(16, 4))
+            ctk.CTkLabel(c, text=value, font=self.f_h3, text_color=color).pack(
+                anchor="w", padx=16, pady=(0, 16))
+
+        if not ff_ok:
+            warn = ctk.CTkFrame(wrap, fg_color=T.PANEL, corner_radius=T.RADIUS_MD)
+            warn.pack(fill="x", pady=(14, 0))
+            ctk.CTkLabel(warn, text="FFmpeg bulunamadı. MP3 dönüştürme ve MP4 birleştirme hata verebilir.",
+                         font=self.f_small, text_color="#ff8888", anchor="w",
+                         justify="left").pack(side="left", padx=16, pady=12)
+            ctk.CTkButton(warn, text="Nasıl kurarım?", font=self.f_tiny, width=110, height=30,
+                          fg_color="transparent", hover_color=T.N900, text_color=T.ACCENT_300,
+                          command=lambda: webbrowser.open("https://ffmpeg.org/download.html")
+                          ).pack(side="right", padx=12)
+
+        faq = [
+            ("Nasıl indiririm?",
+             "Ana sayfada URL kutusuna bağlantıyı yapıştırın, biçimi ve kayıt yerini seçin, İNDİR'e basın."),
+            ("Hangi platformlar destekleniyor?",
+             "YouTube, Instagram, X dahil yt-dlp'nin desteklediği çoğu güncel platform."),
+            ("\"Sadece MP4\" ne yapar?",
+             "YouTube normalde Opus/WebM verir. Bu seçenekle H.264 + AAC doğrudan çekilir, dönüştürme adımı atlanır."),
+            ("İndirdiğim dosyaları nerede bulurum?",
+             "İndirme Geçmişi ekranından ilgili satırın klasörünü açabilirsiniz."),
+            ("FFmpeg nedir?",
+             "MP3 dönüştürme ve video–ses birleştirme için gereken araç. Paketlenmiş sürümde uygulamayla birlikte gelir."),
+        ]
+        fbox = ctk.CTkFrame(wrap, fg_color="transparent")
+        fbox.pack(fill="x", pady=(20, 0))
+        for q, a in faq:
+            item = ctk.CTkFrame(fbox, fg_color="transparent")
+            item.pack(fill="x", pady=(0, 0))
+            ctk.CTkLabel(item, text=q, font=self.f_body_m, text_color=T.TEXT,
+                         anchor="w").pack(anchor="w", pady=(16, 4))
+            ctk.CTkLabel(item, text=a, font=self.f_body, text_color=T.N500, anchor="w",
+                         justify="left", wraplength=760).pack(anchor="w", pady=(0, 16))
+            ctk.CTkFrame(fbox, height=1, fg_color=T.N900).pack(fill="x")
+
+    # ══════════════════════════════════════════════════════ downloading ═════
+
+    def browse_folder(self):
+        folder = filedialog.askdirectory()
+        if folder:
+            self.path_var.set(folder)
+            set_setting('last_folder', folder)
+
+    def start_download(self):
+        video_url = self.url_entry.get().strip()
+        save_path = self.path_var.get().strip()
+        if not video_url or not save_path:
+            messagebox.showwarning("Uyarı", "Lütfen URL ve Kayıt Yeri belirtiniz.")
+            return
+
+        audio_only = self.format_choice == "mp3"
+        mp4_only = self.format_choice == "mp4"
+        ftyp = "MP3 Audio" if audio_only else ("MP4 Video" if mp4_only else "Default Video")
+        fmt_tag = {"mp3": "MP3 320", "mp4": "MP4", "both": "Video + Ses"}[self.format_choice]
+
+        self.show_screen("home")
+        self.lbl_title.configure(text="Sorgulanıyor...")
+        self.lbl_fmt_tag._label.configure(text=fmt_tag)
+        self.lbl_fmt_tag.pack(side="right", padx=(8, 0))
+        self.lbl_status.configure(text="1 işlem sürüyor", text_color=T.ACCENT_300)
+        self.lbl_prog.configure(text="İndiriliyor · %0")
+        self.lbl_speed.configure(text="")
+        self.progress.set(0)
+
+        threading.Thread(target=self._run_downloader_thread,
+                         args=(video_url, save_path, audio_only, mp4_only, ftyp),
+                         daemon=True).start()
+
+    def _run_downloader_thread(self, video_url, save_path, audio_only, mp4_only, ftyp):
+        self.current_download_type = ftyp
+        self.current_save_path = save_path
+        self.downloader.download(video_url, save_path, audio_only, mp4_only)
+        self.after(0, lambda: self.url_entry.delete(0, 'end'))
+
+    def on_download_info(self, video_title, thumbnail_url):
+        img_ctk = None
+        if thumbnail_url:
+            try:
+                r = requests.get(thumbnail_url, timeout=5)
+                if r.status_code == 200:
+                    image_data = Image.open(BytesIO(r.content))
+                    img_ctk = ctk.CTkImage(light_image=image_data, dark_image=image_data,
+                                           size=(130, 74))
+            except Exception as e:
+                print(f"Thumbnail yüklenemedi: {e}")
+        self.after(0, self._show_video_info, video_title, img_ctk)
+
+    def _show_video_info(self, video_title, img_ctk):
+        self.lbl_title.configure(text=video_title)
+        if img_ctk:
+            self._thumb_img = img_ctk
+            self.thumb_lbl.configure(image=img_ctk, text="")
+        else:
+            self.thumb_lbl.configure(image=None, text="▶")
+
+    def update_progress(self, progress):
+        self.after(0, self._update_progress_ui, progress)
+
+    def _update_progress_ui(self, progress):
+        self.progress.set(progress / 100)
+        self.lbl_prog.configure(text=f"İndiriliyor · %{progress}")
+
+    def on_download_success(self, video_title):
+        self.after(0, self._show_success, video_title)
+
+    def _show_success(self, video_title):
+        self.progress.set(1)
+        self.lbl_prog.configure(text="Tamamlandı", text_color=T.ACCENT_300)
+        self.lbl_status.configure(text="Başarıyla tamamlandı", text_color=T.ACCENT_300)
+        self.lbl_title.configure(text=video_title)
+        self.success_downloads += 1
+        self.lbl_success.configure(text=str(self.success_downloads))
+        add_to_history(video_title, self.current_save_path, self.current_download_type)
+        if get_setting('auto_open_folder'):
+            self._open_folder(self.current_save_path)
+
+    def on_download_error(self, error_msg):
+        self.after(0, self._show_error, error_msg)
+
+    def _show_error(self, error_msg):
+        self.progress.set(0)
+        self.lbl_prog.configure(text="İndirme başarısız", text_color="#ff6b6b")
+        self.lbl_status.configure(text="Hata oluştu", text_color="#ff6b6b")
+        self.lbl_title.configure(text="Hata oluştu.")
+        self.error_downloads += 1
+        self.lbl_error.configure(text=str(self.error_downloads))
+        messagebox.showerror("Hata", error_msg)
+
+    # ═══════════════════════════════════════════════════════════ updates ════
 
     def _check_updates_async(self):
         update_available, new_version, download_url = check_for_updates()
@@ -84,11 +767,10 @@ class DownloaderApp(ctk.CTk):
 
     def _prompt_update(self, new_version, download_url):
         current = get_current_version()
-        answer = messagebox.askyesno(
+        if messagebox.askyesno(
             "Yeni Güncelleme Mevcut!",
-            f"Video Downloader Pro'nun yeni bir sürümü ({new_version}) bulundu.\n(Mevcut Sürümünüz: {current})\n\nŞimdi otomatik olarak güncellenip yeniden başlatılmasını ister misiniz?"
-        )
-        if answer:
+            f"Video Downloader Pro'nun yeni bir sürümü ({new_version}) bulundu.\n"
+            f"(Mevcut Sürümünüz: {current})\n\nŞimdi güncellenip yeniden başlatılsın mı?"):
             success, msg = perform_update(download_url)
             if success:
                 messagebox.showinfo("Güncelleniyor", msg)
@@ -97,445 +779,17 @@ class DownloaderApp(ctk.CTk):
                 messagebox.showerror("Güncelleme Hatası", msg)
 
     def _on_ytdlp_updated(self, new_version):
-        # Arka plan iş parçacığından çağrılır -> UI thread'ine aktar
         self.after(0, self._show_ytdlp_updated, new_version)
 
     def _show_ytdlp_updated(self, new_version):
+        self.engine_card_body.configure(
+            text=f"yt-dlp {new_version} indirildi. Uygulamayı yeniden "
+                 "başlattığınızda etkinleşir.")
+        self.engine_card.pack(fill="x", padx=6, pady=(20, 0))
+
+    def _restart_app(self):
         try:
-            self.lbl_ytdlp_version.configure(
-                text=f"{new_version} ✓ (yeniden başlat)",
-                text_color=("#0099cc", "#00e5ff")
-            )
-        except Exception:
-            pass
-        messagebox.showinfo(
-            "İndirme Motoru Güncellendi",
-            f"İndirme motoru (yt-dlp) {new_version} sürümüne güncellendi.\n"
-            "Bu güncelleme, uygulamayı bir sonraki açışınızda otomatik olarak "
-            "etkinleşecek ve olası indirme hatalarını giderecektir."
-        )
-
-    def _build_sidebar(self):
-        self.sidebar = ctk.CTkFrame(self, width=220, corner_radius=0, fg_color=("#f0f0f0", "#15171e"))
-        self.sidebar.grid(row=0, column=0, sticky="nsew")
-        self.sidebar.grid_rowconfigure(6, weight=1)
-
-        # Title
-        self.title_frame = ctk.CTkFrame(self.sidebar, fg_color="transparent")
-        self.title_frame.grid(row=0, column=0, padx=20, pady=(30, 40), sticky="w")
-        
-        self.lbl_icon = ctk.CTkLabel(self.title_frame, text="⬇", font=ctk.CTkFont(size=20), text_color=("#0099cc", "#00e5ff"))
-        self.lbl_icon.pack(side="left", padx=(0, 10))
-        self.logo_label = ctk.CTkLabel(self.title_frame, text="Video Downloader Pro", font=ctk.CTkFont(size=14, weight="bold"))
-        self.logo_label.pack(side="left")
-
-        # Menu Buttons
-        self.sidebar_btns = {}
-        
-        def create_btn(row, key, text, command):
-            btn = ctk.CTkButton(self.sidebar, text=text, fg_color="transparent", text_color=("#555555", "#a0a0ae"), hover_color=("#e5e5e5", "#1c1e26"), anchor="w", height=45, corner_radius=8, command=command)
-            btn.grid(row=row, column=0, padx=20, pady=5, sticky="ew")
-            self.sidebar_btns[key] = btn
-            return btn
-
-        create_btn(1, "home", "🏠   Home", lambda: self.show_frame("home"))
-        create_btn(2, "downloads", "⬇   Downloads History", lambda: self.show_frame("downloads"))
-        create_btn(3, "settings", "⚙   Settings", lambda: self.show_frame("settings"))
-        create_btn(4, "help", "❓   Help", lambda: self.show_frame("help"))
-
-    def show_frame(self, frame_name):
-        # Update button colors
-        for key, btn in self.sidebar_btns.items():
-            if key == frame_name:
-                btn.configure(fg_color=("#d9d9d9", "#212a31"), text_color=("#0099cc", "#00e5ff"))
-            else:
-                btn.configure(fg_color="transparent", text_color=("#555555", "#a0a0ae"))
-                
-        # Hide all frames
-        self.home_frame.grid_forget()
-        self.downloads_frame.grid_forget()
-        self.settings_frame.grid_forget()
-        self.help_frame.grid_forget()
-        
-        # Show target
-        if frame_name == "home":
-            self.home_frame.grid(row=0, column=0, sticky="nsew")
-        elif frame_name == "downloads":
-            self._refresh_downloads()
-            self.downloads_frame.grid(row=0, column=0, sticky="nsew")
-        elif frame_name == "settings":
-            self.settings_frame.grid(row=0, column=0, sticky="nsew")
-        elif frame_name == "help":
-            self.help_frame.grid(row=0, column=0, sticky="nsew")
-
-    def _build_home_frame(self):
-        self.home_frame = ctk.CTkFrame(self.frames_container, fg_color=("#ffffff", "#111319"), corner_radius=0)
-        self.home_frame.grid_rowconfigure(0, weight=1)
-        self.home_frame.grid_columnconfigure(0, weight=3) # left side
-        self.home_frame.grid_columnconfigure(1, weight=1) # right sidebar
-
-        self.main_content = ctk.CTkFrame(self.home_frame, fg_color="transparent")
-        self.main_content.grid(row=0, column=0, sticky="nsew")
-        self.main_content.grid_rowconfigure(5, weight=1)
-        self.main_content.grid_columnconfigure(0, weight=1)
-
-        self._build_right_sidebar(self.home_frame)
-
-        # Top URL Input Area
-        self.top_bar = ctk.CTkFrame(self.main_content, fg_color="transparent")
-        self.top_bar.grid(row=0, column=0, padx=40, pady=(40, 20), sticky="ew")
-        self.top_bar.columnconfigure(0, weight=1)
-
-        self.url_wrapper = ctk.CTkFrame(self.top_bar, fg_color=("#f9f9f9", "#1a1c23"), border_color=("#0099cc", "#00e5ff"), border_width=1, corner_radius=25, height=55)
-        self.url_wrapper.grid(row=0, column=0, sticky="ew", padx=(0, 15))
-        self.url_wrapper.grid_columnconfigure(0, weight=1)
-        self.url_wrapper.grid_propagate(False)
-
-        self.entry_url = ctk.CTkEntry(self.url_wrapper, placeholder_text="Yapıştırın veya Arayın...", height=40, border_width=0, fg_color="transparent", placeholder_text_color=("#888888", "#6c6c75"))
-        self.entry_url.grid(row=0, column=0, sticky="ew", padx=20, pady=7)
-
-        self.btn_download = ctk.CTkButton(self.top_bar, text="İNDİR", font=ctk.CTkFont(weight="bold", size=14), fg_color=("#0099cc", "#00e5ff"), text_color=("white", "black"), hover_color=("#007799", "#00b8cc"), height=55, corner_radius=25, width=130, command=self.start_download)
-        self.btn_download.grid(row=0, column=1)
-
-        # Quick Links / Options Area
-        self.quick_links_frame = ctk.CTkFrame(self.main_content, fg_color="transparent")
-        self.quick_links_frame.grid(row=1, column=0, padx=40, pady=10, sticky="ew")
-        self.quick_links_frame.grid_columnconfigure(1, weight=1)
-        
-        self.lbl_quick = ctk.CTkLabel(self.quick_links_frame, text="Hızlı Ayarlar", font=ctk.CTkFont(weight="bold", size=15))
-        self.lbl_quick.grid(row=0, column=0, sticky="w", pady=(0,15))
-
-        self.format_frame = ctk.CTkFrame(self.quick_links_frame, fg_color="transparent")
-        self.format_frame.grid(row=1, column=0, sticky="w")
-        
-        self.var_audio = ctk.BooleanVar(value=False)
-        self.check_audio = ctk.CTkCheckBox(self.format_frame, text="Sadece Ses (MP3)", variable=self.var_audio, checkbox_height=20, checkbox_width=20, corner_radius=5)
-        self.check_audio.pack(side="left", padx=(0, 25))
-
-        self.var_mp4 = ctk.BooleanVar(value=False)
-        self.check_mp4 = ctk.CTkCheckBox(self.format_frame, text="Sadece MP4", variable=self.var_mp4, checkbox_height=20, checkbox_width=20, corner_radius=5)
-        self.check_mp4.pack(side="left")
-
-        # Save Path setting
-        self.path_frame = ctk.CTkFrame(self.quick_links_frame, fg_color="transparent")
-        self.path_frame.grid(row=2, column=0, sticky="w", pady=(20, 0))
-        
-        self.lbl_path = ctk.CTkLabel(self.path_frame, text="Kayıt Yeri:", text_color=("#555555", "#a0a0ae"))
-        self.lbl_path.pack(side="left", padx=(0, 15))
-        
-        self.entry_path = ctk.CTkEntry(self.path_frame, width=350, height=35, fg_color=("#f9f9f9", "#1a1c23"), border_color=("#cccccc", "#2b2d35"))
-        self.entry_path.pack(side="left", padx=(0, 15))
-        
-        self.btn_browse = ctk.CTkButton(self.path_frame, text="Gözat", width=80, height=35, fg_color=("#e0e0e0", "#2b2d35"), hover_color=("#d0d0d0", "#3c3e47"), text_color=("black", "white"), command=self.browse_folder)
-        self.btn_browse.pack(side="left")
-
-        # Active Downloads Section
-        self.lbl_active = ctk.CTkLabel(self.main_content, text="Aktif İndirme", font=ctk.CTkFont(weight="bold", size=16))
-        self.lbl_active.grid(row=2, column=0, sticky="w", padx=40, pady=(30, 10))
-
-        self.active_dl_frame = ctk.CTkFrame(self.main_content, fg_color=("#f5f5f5", "#1c1e26"), corner_radius=12, border_color=("#cccccc", "#2b2d35"), border_width=1)
-        self.active_dl_frame.grid(row=3, column=0, sticky="ew", padx=40, pady=(0, 10), ipady=10)
-        self.active_dl_frame.columnconfigure(1, weight=1)
-        
-        self.thumb_placeholder = ctk.CTkFrame(self.active_dl_frame, width=100, height=60, fg_color=("#e0e0e0", "#2b2d35"), corner_radius=8)
-        self.thumb_placeholder.grid(row=0, column=0, rowspan=3, padx=15, pady=10)
-        self.thumb_placeholder.pack_propagate(False)
-        self.thumb_placeholder.grid_propagate(False)
-        
-        self.lbl_thumbnail = ctk.CTkLabel(self.thumb_placeholder, text="")
-        self.lbl_thumbnail.pack(expand=True, fill="both")
-        
-        self.lbl_video_title = ctk.CTkLabel(self.active_dl_frame, text="Bekleniyor...", font=ctk.CTkFont(weight="bold", size=13))
-        self.lbl_video_title.grid(row=0, column=1, sticky="w", padx=5, pady=(10,0))
-        
-        self.progress_bar = ctk.CTkProgressBar(self.active_dl_frame, mode="determinate", progress_color="#00e5ff", fg_color=("#e0e0e0", "#2b2d35"), height=6)
-        self.progress_bar.grid(row=1, column=1, sticky="ew", padx=5, pady=5)
-        self.progress_bar.set(0)
-        
-        self.label_status = ctk.CTkLabel(self.active_dl_frame, text="Hazır", text_color=("#555555", "#a0a0ae"), font=ctk.CTkFont(size=11))
-        self.label_status.grid(row=2, column=1, sticky="w", padx=5, pady=(0,10))
-
-    def _build_right_sidebar(self, parent):
-        self.right_sidebar = ctk.CTkFrame(parent, width=280, corner_radius=0, fg_color=("#fcfcfc", "#181a20"), border_width=1, border_color=("#cccccc", "#2b2d35"))
-        self.right_sidebar.grid(row=0, column=1, sticky="nsew")
-
-        lbl_history = ctk.CTkLabel(self.right_sidebar, text="📌 Oturum Bilgisi", font=ctk.CTkFont(weight="bold", size=14))
-        lbl_history.pack(pady=(40, 10), padx=25, anchor="w")
-
-        stat1_frame = ctk.CTkFrame(self.right_sidebar, fg_color="transparent")
-        stat1_frame.pack(fill="x", padx=25, pady=10)
-        ctk.CTkLabel(stat1_frame, text="✅ Başarılı İşlemler", text_color=("#555555", "#a0a0ae")).pack(side="left")
-        self.lbl_success_count = ctk.CTkLabel(stat1_frame, text="0", text_color=("#0099cc", "#00e5ff"), font=ctk.CTkFont(weight="bold", size=14))
-        self.lbl_success_count.pack(side="right")
-        
-        stat2_frame = ctk.CTkFrame(self.right_sidebar, fg_color="transparent")
-        stat2_frame.pack(fill="x", padx=25, pady=15)
-        ctk.CTkLabel(stat2_frame, text="❌ Hatalı İşlemler", text_color=("#555555", "#a0a0ae")).pack(side="left")
-        self.lbl_error_count = ctk.CTkLabel(stat2_frame, text="0", text_color=("#cc0000", "#ff4444"), font=ctk.CTkFont(weight="bold", size=14))
-        self.lbl_error_count.pack(side="right")
-
-        lbl_active = ctk.CTkLabel(self.right_sidebar, text="💻 Sistem Durumu", font=ctk.CTkFont(weight="bold", size=14))
-        lbl_active.pack(pady=(30, 10), padx=25, anchor="w")
-
-        status_frame = ctk.CTkFrame(self.right_sidebar, fg_color="transparent")
-        status_frame.pack(fill="x", padx=25, pady=5)
-        ctk.CTkLabel(status_frame, text="İndirme Motoru:", text_color=("#555555", "#a0a0ae")).pack(side="left")
-        ctk.CTkLabel(status_frame, text="Aktif", text_color=("#0099cc", "#00e5ff"), font=ctk.CTkFont(weight="bold")).pack(side="right")
-        
-        status2_frame = ctk.CTkFrame(self.right_sidebar, fg_color="transparent")
-        status2_frame.pack(fill="x", padx=25, pady=5)
-        ctk.CTkLabel(status2_frame, text="Sürüm:", text_color=("#555555", "#a0a0ae")).pack(side="left")
-        ctk.CTkLabel(status2_frame, text=f"v{get_current_version()}").pack(side="right")
-
-        # İndirme motoru (yt-dlp) sürümü — otomatik güncellenir
-        status3_frame = ctk.CTkFrame(self.right_sidebar, fg_color="transparent")
-        status3_frame.pack(fill="x", padx=25, pady=5)
-        ctk.CTkLabel(status3_frame, text="Motor Sürümü:", text_color=("#555555", "#a0a0ae")).pack(side="left")
-        self.lbl_ytdlp_version = ctk.CTkLabel(status3_frame, text=f"{get_active_version() or '—'}")
-        self.lbl_ytdlp_version.pack(side="right")
-
-        self.success_downloads = 0
-        self.error_downloads = 0
-
-    def _build_downloads_frame(self):
-        self.downloads_frame = ctk.CTkFrame(self.frames_container, fg_color=("#ffffff", "#111319"), corner_radius=0)
-        
-        lbl_title = ctk.CTkLabel(self.downloads_frame, text="İndirme Geçmişi", font=ctk.CTkFont(weight="bold", size=20))
-        lbl_title.pack(pady=(40, 20), padx=40, anchor="w")
-
-        self.history_scroll = ctk.CTkScrollableFrame(self.downloads_frame, fg_color="transparent")
-        self.history_scroll.pack(fill="both", expand=True, padx=30, pady=(0, 20))
-
-    def _refresh_downloads(self):
-        for child in self.history_scroll.winfo_children():
-            child.destroy()
-            
-        history = load_history()
-        
-        if not history:
-            ctk.CTkLabel(self.history_scroll, text="İndirme geçmişi boş.", text_color=("#555555", "#a0a0ae")).pack(pady=20)
-            return
-            
-        for item in history:
-            comp_frame = ctk.CTkFrame(self.history_scroll, fg_color=("#f5f5f5", "#1c1e26"), corner_radius=12, border_color=("#cccccc", "#2b2d35"), border_width=1)
-            comp_frame.pack(fill="x", pady=(0, 10), ipady=5)
-            
-            ctk.CTkLabel(comp_frame, text="✅", font=ctk.CTkFont(size=20)).pack(side="left", padx=20)
-            
-            info_frame = ctk.CTkFrame(comp_frame, fg_color="transparent")
-            info_frame.pack(side="left", fill="both", expand=True, pady=10)
-            
-            ctk.CTkLabel(info_frame, text=item.get('title', 'Bilinmeyen'), font=ctk.CTkFont(weight="bold", size=13), anchor="w").pack(fill="x")
-            meta_text = f"Tarih: {item.get('date', '')}  |  Format: {item.get('type', '')}"
-            ctk.CTkLabel(info_frame, text=meta_text, font=ctk.CTkFont(size=11), text_color=("#6c6c75", "#6c6c75"), anchor="w").pack(fill="x")
-            
-            path = item.get('path', '')
-            btn_open = ctk.CTkButton(comp_frame, text="Klasörü Aç", width=100, fg_color=("#e0e0e0", "#2b2d35"), hover_color=("#d0d0d0", "#3c3e47"), corner_radius=8, command=lambda p=path: self._open_folder(p))
-            btn_open.pack(side="right", padx=20)
-
-    def _open_folder(self, path):
-        if os.path.exists(path):
-            os.startfile(path)
-        else:
-            messagebox.showwarning("Uyarı", "Seçili klasör artık mevcut değil.")
-
-    def _build_settings_frame(self):
-        self.settings_frame = ctk.CTkFrame(self.frames_container, fg_color=("#ffffff", "#111319"), corner_radius=0)
-        
-        lbl_title = ctk.CTkLabel(self.settings_frame, text="Ayarlar", font=ctk.CTkFont(weight="bold", size=20))
-        lbl_title.pack(pady=(40, 20), padx=40, anchor="w")
-
-        panel = ctk.CTkFrame(self.settings_frame, fg_color=("#f9f9f9", "#1a1c23"), corner_radius=12)
-        panel.pack(fill="x", padx=40, pady=10, ipady=10)
-        
-        # Tema
-        theme_frame = ctk.CTkFrame(panel, fg_color="transparent")
-        theme_frame.pack(fill="x", padx=20, pady=15)
-        ctk.CTkLabel(theme_frame, text="Görünüm Teması", font=ctk.CTkFont(weight="bold")).pack(side="left")
-        
-        self.opt_theme = ctk.CTkOptionMenu(theme_frame, values=["Dark", "Light", "System"], command=self._change_theme, fg_color=("#e0e0e0", "#2b2d35"), button_color=("#e0e0e0", "#2b2d35"))
-        self.opt_theme.set(self.settings.get('theme', 'Dark'))
-        self.opt_theme.pack(side="right")
-
-        # Varsayılan MP4
-        def_mp4_frame = ctk.CTkFrame(panel, fg_color="transparent")
-        def_mp4_frame.pack(fill="x", padx=20, pady=15)
-        ctk.CTkLabel(def_mp4_frame, text="İndirmelerde 'Sadece MP4' Varsayılan Olsun", font=ctk.CTkFont(weight="bold")).pack(side="left")
-        
-        self.sw_mp4 = ctk.CTkSwitch(def_mp4_frame, text="", progress_color="#00e5ff", command=self._toggle_def_mp4)
-        if self.settings.get('default_mp4', True):
-            self.sw_mp4.select()
-        self.sw_mp4.pack(side="right")
-
-        # Otomatik Klasör Açma
-        auto_open_frame = ctk.CTkFrame(panel, fg_color="transparent")
-        auto_open_frame.pack(fill="x", padx=20, pady=15)
-        ctk.CTkLabel(auto_open_frame, text="İndirme Bitince Klasörü Otomatik Aç", font=ctk.CTkFont(weight="bold")).pack(side="left")
-        
-        self.sw_auto = ctk.CTkSwitch(auto_open_frame, text="", progress_color="#00e5ff", command=self._toggle_auto_open)
-        if self.settings.get('auto_open_folder', False):
-            self.sw_auto.select()
-        self.sw_auto.pack(side="right")
-
-    def _change_theme(self, choice):
-        ctk.set_appearance_mode(choice)
-        set_setting('theme', choice)
-
-    def _toggle_def_mp4(self):
-        val = bool(self.sw_mp4.get())
-        set_setting('default_mp4', val)
-        self.var_mp4.set(val)
-
-    def _toggle_auto_open(self):
-        set_setting('auto_open_folder', bool(self.sw_auto.get()))
-
-    def _build_help_frame(self):
-        self.help_frame = ctk.CTkFrame(self.frames_container, fg_color=("#ffffff", "#111319"), corner_radius=0)
-        
-        lbl_title = ctk.CTkLabel(self.help_frame, text="Yardım & Sistem Gereksinimleri", font=ctk.CTkFont(weight="bold", size=20))
-        lbl_title.pack(pady=(40, 20), padx=40, anchor="w")
-
-        # System Requirements Checker
-        req_frame = ctk.CTkFrame(self.help_frame, fg_color=("#f9f9f9", "#1a1c23"), corner_radius=12, border_color=("#cccccc", "#2b2d35"), border_width=1)
-        req_frame.pack(fill="x", padx=40, pady=(0, 20), ipady=15)
-        
-        ctk.CTkLabel(req_frame, text="Sistem Bağımlılıkları Kontrolü", font=ctk.CTkFont(weight="bold", size=15)).pack(anchor="w", padx=20, pady=(10, 5))
-        
-        # FFmpeg check
-        ffmpeg_frame = ctk.CTkFrame(req_frame, fg_color="transparent")
-        ffmpeg_frame.pack(fill="x", padx=20, pady=5)
-        
-        ctk.CTkLabel(ffmpeg_frame, text="FFmpeg (Gerekli):", font=ctk.CTkFont(size=14)).pack(side="left")
-        
-        is_installed, msg = check_ffmpeg_installed()
-        status_text = "Kurulu ve Çalışıyor ✅" if is_installed else "Eksik! ❌"
-        color = "#00e5ff" if is_installed else "#ff4444"
-        
-        ctk.CTkLabel(ffmpeg_frame, text=status_text, font=ctk.CTkFont(weight="bold", size=14), text_color=color).pack(side="left", padx=10)
-        
-        if not is_installed:
-            ctk.CTkButton(ffmpeg_frame, text="Nasıl Kurarım?", width=100, height=30, fg_color=("#e0e0e0", "#2b2d35"), hover_color=("#d0d0d0", "#3c3e47"), 
-                          command=lambda: webbrowser.open("https://ffmpeg.org/download.html")).pack(side="right", padx=10)
-            
-            ctk.CTkLabel(req_frame, text="FFmpeg kurulu değil. Ses (MP3) dönüştürme ve MP4 birleştirme işlemleri HATA VEREBİLİR.\nLütfen FFmpeg indirip sistem ortam değişkenlerine (PATH) ekleyin.", 
-                         text_color=("#cc0000", "#ff4444"), justify="left").pack(anchor="w", padx=20, pady=5)
-
-        # Help Info Text
-        info_box = ctk.CTkTextbox(self.help_frame, fg_color=("#f9f9f9", "#1a1c23"), corner_radius=12, font=ctk.CTkFont(size=14))
-        info_box.pack(fill="both", expand=True, padx=40, pady=(0, 40))
-        
-        help_text = """Burası Video Downloader Pro Hakkında Yardım Sayfasıdır!
-
-* Nasıl İndiririm?: Ana Sayfaya giderek url kutucuğuna video linkini yapıştırın. Konum seçin ve 'İNDİR'e tıklayın.
-* Hangi formatları destekler?: YouTube, Instagram, Twitter dahil çoğu güncel platformu yt-dlp destekler.
-* Varsayılan MP4 özelliği nedir?: YouTube normalde Opus/WebM indirir. Sadece MP4 seçeneği ile H264+AAC direkt YouTube'dan çekilir.
-* İndirdiğim dosyaları nerede bulurum?: İndirme Geçmişi (Downloads) ekranından geçmiş klasörleri açabilirsiniz.
-* FFmpeg nedir?: MP4 dönüştürebilmek ve kalite artırabilmek için yukarıdaki menüden indirip işletim sisteminize kurmanız gereken araçtır.
-"""
-        info_box.insert("1.0", help_text)
-        info_box.configure(state="disabled")
-
-    def _load_saved_path(self):
-        path = get_setting('last_folder')
-        if path and os.path.exists(path):
-            self.entry_path.insert(0, path)
-
-    def browse_folder(self):
-        folder_selected = filedialog.askdirectory()
-        if folder_selected:
-            self.entry_path.delete(0, 'end')
-            self.entry_path.insert(0, folder_selected)
-            set_setting('last_folder', folder_selected)
-
-    def start_download(self):
-        video_url = self.entry_url.get().strip()
-        save_path = self.entry_path.get().strip()
-        audio_only = self.var_audio.get()
-        mp4_only = self.var_mp4.get()
-
-        if video_url and save_path:
-            self.lbl_video_title.configure(text="Sorgulanıyor...")
-            self.label_status.configure(text="İndirme başlatıldı: 0%", text_color=("#0099cc", "#00e5ff"))
-            self.progress_bar.set(0)
-            self.btn_download.configure(state="disabled")
-            
-            # Kaydetme pathi type parametresi 
-            ftyp = "MP3 Audio" if audio_only else ("MP4 Video" if mp4_only else "Default Video")
-            
-            threading.Thread(
-                target=self._run_downloader_thread, 
-                args=(video_url, save_path, audio_only, mp4_only, ftyp),
-                daemon=True
-            ).start()
-        else:
-            messagebox.showwarning("Uyarı", "Lütfen URL ve Kayıt Yeri belirtiniz.\nBoş alanları doldurun.")
-
-    def _run_downloader_thread(self, video_url, save_path, audio_only, mp4_only, ftyp):
-        self.current_download_type = ftyp
-        self.current_save_path = save_path
-        self.downloader.download(video_url, save_path, audio_only, mp4_only)
-        self.after(0, self._reset_ui_state)
-
-    def _reset_ui_state(self):
-        self.btn_download.configure(state="normal")
-        self.entry_url.delete(0, 'end')
-
-    def on_download_info(self, video_title, thumbnail_url):
-        img_ctk = None
-        if thumbnail_url:
-            try:
-                response = requests.get(thumbnail_url, timeout=5)
-                if response.status_code == 200:
-                    image_data = Image.open(BytesIO(response.content))
-                    img_ctk = ctk.CTkImage(light_image=image_data, dark_image=image_data, size=(100, 60))
-            except Exception as e:
-                print(f"Thumbnail yüklenemedi: {e}")
-                
-        self.after(0, self._show_video_info, video_title, img_ctk)
-
-    def _show_video_info(self, video_title, img_ctk):
-        self.lbl_video_title.configure(text=video_title)
-        if img_ctk:
-            self.lbl_thumbnail.configure(image=img_ctk)
-        else:
-            self.lbl_thumbnail.configure(image="")
-
-    def update_progress(self, progress):
-        self.after(0, self._update_progress_ui, progress)
-
-    def _update_progress_ui(self, progress):
-        self.progress_bar.set(progress / 100)
-        self.label_status.configure(text=f"İndirme durumu: %{progress}")
-
-    def on_download_success(self, video_title):
-        self.after(0, self._show_success, video_title)
-
-    def _show_success(self, video_title):
-        self.progress_bar.set(1)
-        self.label_status.configure(text="Başarıyla Tamamlandı!", text_color=("#0099cc", "#00e5ff"))
-        self.lbl_video_title.configure(text=video_title)
-        
-        self.success_downloads += 1
-        self.lbl_success_count.configure(text=str(self.success_downloads))
-        
-        # Save to history
-        add_to_history(video_title, self.current_save_path, self.current_download_type)
-        
-        # Check auto open
-        if get_setting('auto_open_folder'):
-            self._open_folder(self.current_save_path)
-            
-        messagebox.showinfo("Başarılı", f"Başarıyla indirildi:\n{video_title}")
-
-    def on_download_error(self, error_msg):
-        self.after(0, self._show_error, error_msg)
-
-    def _show_error(self, error_msg):
-        self.progress_bar.set(0)
-        self.label_status.configure(text="İndirme Başarısız", text_color=("#cc0000", "#ff4444"))
-        self.lbl_video_title.configure(text="Hata oluştu.")
-        
-        self.error_downloads += 1
-        self.lbl_error_count.configure(text=str(self.error_downloads))
-        
-        messagebox.showerror("Hata", error_msg)
+            subprocess.Popen([sys.executable] + sys.argv)
+        except Exception as e:
+            print(f"Yeniden başlatılamadı: {e}")
+        self.destroy()
