@@ -73,11 +73,42 @@ def add_to_history(title, path, file_type):
     except Exception as e:
         print(f"Geçmiş kaydedilirken hata: {e}")
 
+def get_ffmpeg_path():
+    """Uygulamayla birlikte gelen (gömülü) ffmpeg klasörünü döndürür.
+
+    Gömülü ffmpeg bulunamazsa None döner; bu durumda çağıran taraf
+    sistemin PATH'indeki ffmpeg'e düşer.
+    """
+    exe_name = 'ffmpeg.exe' if os.name == 'nt' else 'ffmpeg'
+    bundled_dir = resource_path('ffmpeg')
+    if os.path.exists(os.path.join(bundled_dir, exe_name)):
+        return bundled_dir
+    return None
+
 def check_ffmpeg_installed():
-    """Sistemde FFmpeg'in kurulu ve PATH'e ekli olup olmadığını kontrol eder."""
+    """FFmpeg'in kullanılabilir olup olmadığını kontrol eder.
+
+    Önce uygulamayla birlikte gelen gömülü ffmpeg'e, o yoksa sistemin
+    PATH'indeki ffmpeg'e bakar.
+    """
+    creation_flags = subprocess.CREATE_NO_WINDOW if os.name == 'nt' else 0
+
+    # 1) Gömülü ffmpeg
+    bundled_dir = get_ffmpeg_path()
+    if bundled_dir:
+        exe_name = 'ffmpeg.exe' if os.name == 'nt' else 'ffmpeg'
+        ffmpeg_exe = os.path.join(bundled_dir, exe_name)
+        try:
+            result = subprocess.run([ffmpeg_exe, '-version'], stdout=subprocess.PIPE,
+                                    stderr=subprocess.PIPE, text=True, creationflags=creation_flags)
+            if result.returncode == 0:
+                return True, "FFmpeg (uygulamayla birlikte gelen) algılandı."
+        except Exception:
+            pass  # Gömülü çalışmazsa sisteme düş
+
+    # 2) Sistemdeki ffmpeg (PATH)
     try:
-        # Run ffmpeg -version and suppress output
-        result = subprocess.run(['ffmpeg', '-version'], stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, creationflags=subprocess.CREATE_NO_WINDOW if os.name == 'nt' else 0)
+        result = subprocess.run(['ffmpeg', '-version'], stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, creationflags=creation_flags)
         if result.returncode == 0:
             return True, "FFmpeg kurulu ve algılandı."
         else:

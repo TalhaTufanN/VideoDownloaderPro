@@ -10,3 +10,6 @@ env/
 build/
 dist/
 *.spec
+
+# FFmpeg binaries (boyutları büyük; her geliştirici kendi indirir - bkz. ffmpeg/README.txt)
+ffmpeg/*.exe

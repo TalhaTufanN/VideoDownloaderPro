@@ -20,7 +20,18 @@ Ensure you have Python installed, then install the required dependencies:
 pip install -r requirements.txt
 ```
 
-_Note: For MP3 and MP4 conversion, `ffmpeg` must be installed on your system and accessible via PATH._
+_Note: For MP3 and MP4 conversion, `ffmpeg` is required. When running from source it must be on your PATH. In the packaged `.exe`, `ffmpeg.exe`/`ffprobe.exe` are bundled inside the app (see `ffmpeg/README.txt`), so end users do **not** need to install anything._
+
+## Building the .exe (developers)
+
+1. Place `ffmpeg.exe` and `ffprobe.exe` into the `ffmpeg/` folder (see `ffmpeg/README.txt`).
+2. Build with PyInstaller:
+
+```bash
+pyinstaller VideoDownloaderPro.spec
+```
+
+The output in `dist/VideoDownloaderPro/` is fully self-contained — no Python, no IDE, and no separate ffmpeg install required on the end user's machine.
 
 ## How to run
 
