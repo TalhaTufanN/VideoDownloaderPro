@@ -7,6 +7,7 @@ const api = () => window.pywebview.api;
 
 const state = {
   format: "both",
+  quality: "best",
   path: "",
   running: false,
   faq: [
@@ -31,14 +32,29 @@ document.querySelectorAll(".nav-item").forEach(n =>
     if (n.dataset.screen === "history") renderHistory(await api().get_history());
   }));
 
-/* ── Format selection ──────────────────────────────────────────────────── */
+/* ── Format & kalite seçimi ────────────────────────────────────────────── */
 function setFormat(fmt) {
   state.format = fmt;
   document.querySelectorAll(".fmt-card").forEach(c =>
     c.classList.toggle("sel", c.dataset.fmt === fmt));
+  // MP3'te kalite geçerli değil -> soluklaştır
+  const qb = $("quality-block");
+  if (qb) {
+    const off = fmt === "mp3";
+    qb.style.opacity = off ? "0.4" : "1";
+    qb.style.pointerEvents = off ? "none" : "auto";
+  }
 }
 document.querySelectorAll(".fmt-card").forEach(c =>
   c.addEventListener("click", () => setFormat(c.dataset.fmt)));
+
+function setQuality(q) {
+  state.quality = q;
+  document.querySelectorAll("#seg-quality .opt").forEach(o =>
+    o.classList.toggle("sel", o.dataset.q === q));
+}
+document.querySelectorAll("#seg-quality .opt").forEach(o =>
+  o.addEventListener("click", () => setQuality(o.dataset.q)));
 
 /* ── Actions ───────────────────────────────────────────────────────────── */
 async function browse() {
@@ -50,16 +66,16 @@ async function startDownload() {
   const url = $("url").value.trim();
   if (!url) { $("url").focus(); return; }
   if (!state.path) { alert("Lütfen bir kayıt yeri seçin."); return; }
-  state.running = true;
-  $("active-title").textContent = "Sorgulanıyor...";
   const tag = { both: "Video", mp4: "MP4", mp3: "MP3" }[state.format];
   const tagEl = $("active-tag"); tagEl.textContent = tag; tagEl.hidden = false;
-  $("active-status").textContent = "1 işlem sürüyor";
-  $("progress-label").textContent = "İndiriliyor · %0";
+  $("active-title").textContent = "Çözümleniyor…";
+  $("active-status").textContent = "Çözümleniyor";
+  $("progress-label").textContent = "Bağlantı çözümleniyor…";
   $("speed-label").textContent = "";
   $("progress-bar").style.width = "0%";
+  $("progress-bar").parentElement.classList.add("indet");  // belirsiz animasyon
   showScreen("home");
-  await api().start_download(url, state.format, state.path);
+  await api().start_download(url, state.format, state.path, state.quality);
 }
 
 $("btn-download").addEventListener("click", startDownload);
@@ -149,25 +165,34 @@ function renderFaq() {
 
 /* ── Backend durum yoklaması (pull) ────────────────────────────────────── */
 const prev = {};
+const STATUS_LABEL = {
+  resolving: "Çözümleniyor", running: "İndiriliyor",
+  success: "Tamamlandı", error: "Hata oluştu", confirm: "Onay bekleniyor",
+};
+function setIndeterminate(on) {
+  const bar = $("progress-bar").parentElement;
+  bar.classList.toggle("indet", on);
+}
 function applyState(s) {
-  // İlerleme / durum
-  if (s.status !== prev.status || s.pct !== prev.pct) {
-    if (s.status === "running") {
-      $("progress-bar").style.width = s.pct + "%";
-      $("progress-label").textContent = "İndiriliyor · %" + s.pct;
-      $("active-status").textContent = "1 işlem sürüyor";
-    } else if (s.status === "success") {
-      $("progress-bar").style.width = "100%";
-      $("progress-label").textContent = "Tamamlandı";
-      $("active-status").textContent = "Başarıyla tamamlandı";
-      if (prev.status === "running") $("url").value = "";
-    } else if (s.status === "error") {
+  // Durum / faz
+  if (s.status !== prev.status) {
+    $("active-status").textContent = STATUS_LABEL[s.status] || "Hazır";
+    setIndeterminate(s.status === "resolving");
+    if (s.status === "error") {
       $("progress-bar").style.width = "0%";
-      $("progress-label").textContent = "İndirme başarısız";
-      $("active-status").textContent = "Hata oluştu";
       $("active-title").textContent = "Hata oluştu.";
     }
+    if (s.status === "success") {
+      $("progress-bar").style.width = "100%";
+      if (prev.status === "running" || prev.status === "resolving") $("url").value = "";
+    }
   }
+  // İlerleme çubuğu (yalnızca indirirken)
+  if (s.status === "running" && s.pct !== prev.pct) {
+    $("progress-bar").style.width = s.pct + "%";
+  }
+  // Canlı durum satırı (ne yapıyor)
+  if (s.note !== prev.note) $("progress-label").textContent = s.note || "Hazır";
   // Başlık / küçük resim
   if (s.title && s.title !== prev.title && s.status !== "error") {
     $("active-title").textContent = s.title;
@@ -178,6 +203,17 @@ function applyState(s) {
   // Sayaçlar
   if (s.success !== prev.success) $("stat-success").textContent = s.success;
   if (s.error !== prev.error) $("stat-error").textContent = s.error;
+  // Onay gerektiren (kanal / büyük liste)
+  if (s.confirm && !prev._confirmShown) {
+    prev._confirmShown = true;
+    const c = s.confirm;
+    const kind = c.kind === "channel" ? "Kanal" : "Oynatma listesi";
+    const who = c.uploader ? `\nKanal/sahip: ${c.uploader}` : "";
+    const msg = `${kind}: "${c.title}"${who}\n\nBu bağlantıda ${c.count} içerik var ve HEPSİ indirilecek.` +
+      `\nKayıt yeri altında "${c.title}" adlı bir klasöre inecekler.\n\nDevam edilsin mi?`;
+    Promise.resolve(confirm(msg)).then((ok) => api().confirm_download(ok));
+  }
+  if (!s.confirm) prev._confirmShown = false;
   // Motor güncelleme kartı (kalıcı)
   if (s.engine_update && s.engine_update !== prev.engine_update) {
     $("engine-card-body").textContent =
@@ -194,9 +230,10 @@ function applyState(s) {
   // Tek seferlik olay: hata
   if (s.error_msg) alert(s.error_msg);
   Object.assign(prev, {
-    status: s.status, pct: s.pct, title: s.title, thumb: s.thumb,
+    status: s.status, pct: s.pct, title: s.title, thumb: s.thumb, note: s.note,
     success: s.success, error: s.error,
     engine_update: s.engine_update, app_update: s.app_update,
+    _confirmShown: prev._confirmShown,
   });
 }
 

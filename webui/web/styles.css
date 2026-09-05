@@ -151,6 +151,8 @@ h1,h2,h3,h4,h5,h6 { margin:0; font-weight:600; letter-spacing:-0.015em; line-hei
 .active-title { flex:1; min-width:0; font-size:13.5px; font-weight:500; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
 .bar { position:relative; height:5px; border-radius:3px; background:var(--color-neutral-900); overflow:hidden; }
 .bar > i { position:absolute; inset:0 auto 0 0; border-radius:3px; background:linear-gradient(90deg,var(--color-accent-600),var(--color-accent-400)); width:0%; transition:width .18s ease; }
+.bar.indet > i { width:38%; transition:none; animation: indet 1.1s ease-in-out infinite; }
+@keyframes indet { 0% { left:-42%; } 100% { left:100%; } }
 .active-meta { display:flex; justify-content:space-between; font-size:11.5px; color:var(--color-neutral-500); }
 
 /* Right rail */

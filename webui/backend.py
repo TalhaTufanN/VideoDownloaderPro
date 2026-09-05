@@ -39,12 +39,15 @@ class Api:
         self._cur_type = ""
         self._cur_path = ""
         self._lock = threading.Lock()
+        self._pending = None    # onay bekleyen indirme: (url, fmt, path, quality, info, meta)
         # Arayüzün poll() ile okuduğu paylaşılan durum
         self._state = {
-            "status": "idle",       # idle | running | success | error
+            "status": "idle",       # idle | resolving | running | success | error | confirm
             "title": "",
             "thumb": None,
             "pct": 0,
+            "note": "",             # canlı durum satırı (ne yapıyor)
+            "confirm": None,        # {title,count,uploader,type} — onay gerektiğinde
             "success": 0,
             "error": 0,
             "engine_update": None,  # yeni yt-dlp sürümü (kalıcı — kart)
@@ -53,9 +56,8 @@ class Api:
         }
         self._downloader = YouTubeDownloader(
             progress_callback=self._on_progress,
-            completion_callback=self._on_success,
-            error_callback=self._on_error,
             info_callback=self._on_info,
+            status_callback=self._on_note,
         )
 
     def _set(self, **kw):
@@ -108,23 +110,80 @@ class Api:
             return path
         return ""
 
-    def start_download(self, url, fmt, path):
+    def start_download(self, url, fmt, path, quality="best"):
         url = (url or "").strip()
         path = (path or "").strip()
         if not url or not path:
             return {"ok": False}
         set_setting("last_folder", path)
+        self._set(status="resolving", pct=0, title="Çözümleniyor…", thumb=None,
+                  note="Bağlantı çözümleniyor…", confirm=None)
+        threading.Thread(target=self._run, args=(url, fmt, path, quality), daemon=True).start()
+        return {"ok": True}
+
+    def confirm_download(self, ok):
+        """Onay diyaloğu sonrası çağrılır."""
+        if not self._pending:
+            return
+        if not ok:
+            self._pending = None
+            self._set(status="idle", confirm=None, note="", title="Bekleniyor...", pct=0)
+            return
+        self._set(confirm=None)
+        threading.Thread(target=self._do_download, daemon=True).start()
+
+    def _run(self, url, fmt, path, quality):
+        try:
+            info, meta = self._downloader.probe(url)
+        except Exception as e:
+            with self._lock:
+                self._state["error"] += 1
+                self._state.update(status="error", note="Çözümlenemedi", error_msg=str(e))
+            return
+        self._pending = (url, fmt, path, quality, info, meta)
+        is_channel = any(s in url for s in ("/@", "/channel/", "/c/", "/user/", "/playlists"))
+        if meta["type"] == "playlist" and (is_channel or meta["count"] > 20):
+            self._set(status="confirm", confirm={
+                "title": meta["title"], "count": meta["count"],
+                "uploader": meta["uploader"],
+                "kind": "channel" if is_channel else "playlist",
+            })
+            return
+        self._do_download()
+
+    def _do_download(self):
+        if not self._pending:
+            return
+        url, fmt, path, quality, info, meta = self._pending
         audio_only = fmt == "mp3"
         mp4_only = fmt == "mp4"
         self._cur_type = "MP3 Audio" if audio_only else ("MP4 Video" if mp4_only else "Default Video")
         self._cur_path = path
-        self._set(status="running", pct=0, title="Sorgulanıyor...", thumb=None)
-        threading.Thread(
-            target=self._downloader.download,
-            args=(url, path, audio_only, mp4_only),
-            daemon=True,
-        ).start()
-        return {"ok": True}
+        self._set(status="running", pct=0, note="İndiriliyor…")
+        result = self._downloader.download(url, path, audio_only, mp4_only, quality, info=info)
+        self._pending = None
+
+        if result.get("ok"):
+            if result.get("kind") == "playlist":
+                done, total = result["done"], result["total"]
+                add_to_history(f"{result['title']} — {done} içerik", self._cur_path, self._cur_type)
+                with self._lock:
+                    self._state["success"] += done
+                    self._state.update(status="success", pct=100, title=result["title"],
+                                       note=f"✓ {result['title']} — {done}/{total} içerik indirildi")
+            else:
+                add_to_history(result["title"], self._cur_path, self._cur_type)
+                with self._lock:
+                    self._state["success"] += 1
+                    self._state.update(status="success", pct=100, title=result["title"],
+                                       note="✓ Başarıyla tamamlandı")
+            if get_setting("auto_open_folder"):
+                self.open_folder(self._cur_path)
+        else:
+            with self._lock:
+                self._state["error"] += 1
+                self._state.update(status="error", note="İndirme başarısız",
+                                   error_msg=result.get("message", "Bilinmeyen hata"))
 
     def set_setting(self, key, value):
         set_setting(key, value)
@@ -167,23 +226,14 @@ class Api:
 
     # ── İndirme geri çağrıları (indirme iş parçacığından) ────────────────────
     def _on_info(self, title, thumb):
+        # Tamamlanan içeriği geçmişe ekle (canlı başlık güncellemesinde de)
         self._set(status="running", title=title or "", thumb=thumb)
 
     def _on_progress(self, pct):
-        self._set(status="running", pct=int(pct))
+        self._set(status="running", pct=int(pct), note=f"İndiriliyor · %{int(pct)}")
 
-    def _on_success(self, title):
-        add_to_history(title, self._cur_path, self._cur_type)
-        with self._lock:
-            self._state["success"] += 1
-            self._state.update(status="success", pct=100, title=title)
-        if get_setting("auto_open_folder"):
-            self.open_folder(self._cur_path)
-
-    def _on_error(self, msg):
-        with self._lock:
-            self._state["error"] += 1
-            self._state.update(status="error", error_msg=msg)
+    def _on_note(self, text):
+        self._set(note=text)
 
     def _check_app_update(self):
         available, version, url = check_for_updates()
