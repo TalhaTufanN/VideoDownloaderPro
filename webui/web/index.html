@@ -1,0 +1,209 @@
+<!DOCTYPE html>
+<html lang="tr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Video Downloader Pro</title>
+<link rel="stylesheet" href="styles.css">
+</head>
+<body>
+<div class="app">
+
+  <!-- ── Sidebar ─────────────────────────────────────────────────────────── -->
+  <aside class="sidebar">
+    <div class="brand">
+      <div class="brand-logo"><img src="logo.png" alt="logo"></div>
+      <div>
+        <div class="brand-name">Video Downloader</div>
+        <div class="brand-sub">Pro</div>
+      </div>
+    </div>
+
+    <nav class="nav">
+      <div class="nav-item active" data-screen="home">
+        <svg viewBox="0 0 256 256" fill="none" stroke="currentColor" stroke-width="16"><path d="M40 104l88-64 88 64v104a8 8 0 0 1-8 8h-52v-64H100v64H48a8 8 0 0 1-8-8Z"/></svg>
+        <span>Ana Sayfa</span>
+      </div>
+      <div class="nav-item" data-screen="history">
+        <svg viewBox="0 0 256 256" fill="none" stroke="currentColor" stroke-width="16"><path d="M128 40a88 88 0 1 0 88 88"/><path d="M128 80v48h48"/></svg>
+        <span>İndirme Geçmişi</span>
+      </div>
+      <div class="nav-item" data-screen="settings">
+        <svg viewBox="0 0 256 256" fill="none" stroke="currentColor" stroke-width="16"><circle cx="128" cy="128" r="36"/><path d="M128 24v24M128 208v24M24 128h24M208 128h24M54 54l17 17M185 185l17 17M202 54l-17 17M71 185l-17 17"/></svg>
+        <span>Ayarlar</span>
+      </div>
+      <div class="nav-item" data-screen="help">
+        <svg viewBox="0 0 256 256" fill="none" stroke="currentColor" stroke-width="16"><circle cx="128" cy="128" r="92"/><path d="M104 104a24 24 0 1 1 24 24v12"/><circle cx="128" cy="178" r="6" fill="currentColor"/></svg>
+        <span>Yardım</span>
+      </div>
+    </nav>
+
+    <div class="side-foot">
+      <div class="row"><span class="dot"></span><span>Motor aktif · yt-dlp <span id="foot-engine">—</span></span></div>
+      <div class="ver">Sürüm <span id="foot-version">—</span></div>
+    </div>
+  </aside>
+
+  <!-- ── Main ────────────────────────────────────────────────────────────── -->
+  <main class="main">
+
+    <!-- Home -->
+    <section class="screen active" id="screen-home">
+      <div class="home-grid">
+        <div class="home-main">
+          <div>
+            <h2>Bir bağlantı yapıştırın</h2>
+            <div class="sub">YouTube, Instagram, X ve yt-dlp'nin desteklediği yüzlerce platform.</div>
+          </div>
+
+          <div class="url-row">
+            <div class="url-wrap">
+              <svg viewBox="0 0 256 256" fill="none" stroke="currentColor" stroke-width="16"><path d="M104 152a40 40 0 0 0 56 0l32-32a40 40 0 0 0-56-56l-8 8"/><path d="M152 104a40 40 0 0 0-56 0l-32 32a40 40 0 0 0 56 56l8-8"/></svg>
+              <input id="url" type="text" placeholder="Yapıştırın veya arayın..." autocomplete="off" spellcheck="false">
+              <span class="hint">Ctrl + V</span>
+            </div>
+            <button class="btn btn-primary" id="btn-download">İNDİR</button>
+          </div>
+
+          <div>
+            <div class="kicker" style="margin-bottom:12px">Biçim</div>
+            <div class="fmt-grid" id="fmt-grid">
+              <div class="fmt-card" data-fmt="both"><div class="t">Video + Ses</div><div class="s">En yüksek kalite · MKV olabilir</div></div>
+              <div class="fmt-card" data-fmt="mp4"><div class="t">Sadece MP4</div><div class="s">Her yerde oynar · H.264</div></div>
+              <div class="fmt-card" data-fmt="mp3"><div class="t">Sadece Ses</div><div class="s">MP3 · 320 kbps</div></div>
+            </div>
+          </div>
+
+          <div>
+            <div class="kicker" style="margin-bottom:12px">Kayıt yeri</div>
+            <div class="path-row">
+              <div class="path-box">
+                <svg viewBox="0 0 256 256" fill="none" stroke="currentColor" stroke-width="16"><path d="M32 200V64a8 8 0 0 1 8-8h56l24 24h88a8 8 0 0 1 8 8v112a8 8 0 0 1-8 8H40a8 8 0 0 1-8-8Z"/></svg>
+                <span id="path-label">Klasör seçilmedi</span>
+              </div>
+              <button class="btn btn-secondary" id="btn-browse" style="height:42px;padding:0 18px">Gözat</button>
+            </div>
+          </div>
+
+          <div>
+            <div class="section-head" style="margin-bottom:12px">
+              <div class="kicker">Aktif indirme</div>
+              <span class="status" id="active-status">Hazır</span>
+            </div>
+            <div class="active-card">
+              <div class="thumb" id="thumb">
+                <svg viewBox="0 0 256 256" fill="currentColor"><path d="M96 76l84 52-84 52Z"/></svg>
+              </div>
+              <div class="active-info">
+                <div class="active-title-row">
+                  <div class="active-title" id="active-title">Bekleniyor...</div>
+                  <span class="tag tag-accent" id="active-tag" hidden></span>
+                </div>
+                <div class="bar"><i id="progress-bar"></i></div>
+                <div class="active-meta">
+                  <span id="progress-label">Hazır</span>
+                  <span id="speed-label"></span>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Right rail -->
+        <aside class="rail">
+          <div>
+            <div class="kicker" style="margin-bottom:14px">Oturum</div>
+            <div class="stat-grid">
+              <div class="stat"><div class="n ok" id="stat-success">0</div><div class="l">Başarılı</div></div>
+              <div class="stat"><div class="n err" id="stat-error">0</div><div class="l">Hatalı</div></div>
+            </div>
+          </div>
+          <div>
+            <div class="kicker" style="margin-bottom:12px">Sistem durumu</div>
+            <div class="sysrows">
+              <div class="r"><span class="k">İndirme motoru</span><span class="v ok">Aktif</span></div>
+              <div class="r"><span class="k">FFmpeg</span><span class="v" id="sys-ffmpeg">—</span></div>
+              <div class="r"><span class="k">Motor sürümü</span><span class="v" id="sys-engine">—</span></div>
+              <div class="r"><span class="k">Uygulama</span><span class="v" id="sys-app">—</span></div>
+            </div>
+          </div>
+          <div class="engine-card" id="engine-card" hidden>
+            <div class="h">Motor güncellemesi hazır</div>
+            <div class="b" id="engine-card-body"></div>
+            <button class="btn btn-ghost" id="btn-restart" style="margin-top:11px;height:30px;padding:0 12px;font-size:12px">Yeniden başlat</button>
+          </div>
+          <div class="shortcuts">Kısayollar<br><b>Ctrl+V</b> yapıştır · <b>Enter</b> indir</div>
+        </aside>
+      </div>
+    </section>
+
+    <!-- History -->
+    <section class="screen" id="screen-history">
+      <div class="page">
+        <div class="section-head" style="align-items:flex-end">
+          <div>
+            <h2>İndirme Geçmişi</h2>
+            <div class="sub" id="hist-sub"></div>
+          </div>
+          <button class="btn btn-ghost" id="btn-clear-history" style="height:36px">Geçmişi temizle</button>
+        </div>
+        <table class="table">
+          <thead><tr><th>Başlık</th><th>Biçim</th><th>Tarih</th><th></th></tr></thead>
+          <tbody id="hist-body"></tbody>
+        </table>
+      </div>
+    </section>
+
+    <!-- Settings -->
+    <section class="screen" id="screen-settings">
+      <div class="page">
+        <div>
+          <h2>Ayarlar</h2>
+          <div class="sub">Tercihler settings.json dosyasında saklanır.</div>
+        </div>
+        <div class="set-list">
+          <div class="set-row">
+            <div><div class="t">Görünüm teması</div><div class="s">Uygulama Nocturne koyu teması için ayarlanmıştır.</div></div>
+            <div class="seg" id="seg-theme">
+              <div class="opt sel" data-theme="Dark">Koyu</div>
+              <div class="opt" data-theme="Light">Açık</div>
+              <div class="opt" data-theme="System">Sistem</div>
+            </div>
+          </div>
+          <div class="set-row">
+            <div><div class="t">İndirmelerde "Sadece MP4" varsayılan olsun</div><div class="s">H.264 + AAC doğrudan çekilir, dönüştürme beklemezsiniz.</div></div>
+            <div class="toggle" id="tg-mp4"><i></i></div>
+          </div>
+          <div class="set-row">
+            <div><div class="t">İndirme bitince klasörü otomatik aç</div><div class="s">Dosya gezgini tamamlanan indirmenin klasöründe açılır.</div></div>
+            <div class="toggle" id="tg-auto"><i></i></div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- Help -->
+    <section class="screen" id="screen-help">
+      <div class="page">
+        <div>
+          <h2>Yardım</h2>
+          <div class="sub">Sistem gereksinimleri ve sık sorulanlar.</div>
+        </div>
+        <div class="help-cards">
+          <div class="help-card"><div class="k">FFmpeg</div><div class="v" id="help-ffmpeg">—</div></div>
+          <div class="help-card"><div class="k">İndirme motoru</div><div class="v n" id="help-engine">—</div></div>
+          <div class="help-card"><div class="k">Uygulama</div><div class="v n" id="help-app">—</div></div>
+        </div>
+        <div class="warn" id="help-warn" hidden>
+          <div class="m">FFmpeg bulunamadı. MP3 dönüştürme ve MP4 birleştirme hata verebilir.</div>
+          <button class="btn btn-ghost" id="btn-ffmpeg-help">Nasıl kurarım?</button>
+        </div>
+        <div class="faq" id="faq"></div>
+      </div>
+    </section>
+
+  </main>
+</div>
+<script src="app.js"></script>
+</body>
+</html>
