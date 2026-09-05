@@ -82,12 +82,12 @@ class Api:
         return data
 
     def poll(self):
-        """Arayüzün zamanlayıcısı bunu çağırır. Tek seferlik alanları (hata
-        mesajı, uygulama güncellemesi) döndürdükten sonra temizler."""
+        """Arayüzün zamanlayıcısı bunu çağırır. Tek seferlik hata mesajını
+        döndürdükten sonra temizler; kart durumları (motor/uygulama
+        güncellemesi) kalıcıdır."""
         with self._lock:
             snap = dict(self.state)
             self.state["error_msg"] = None
-            self.state["app_update"] = None
         return snap
 
     def get_history(self):
@@ -197,6 +197,16 @@ class Api:
 
 def run():
     api = Api()
+
+    # Görev çubuğu simgesinin uygulamaya (python.exe'ye değil) ait olması için
+    try:
+        import ctypes
+        ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID(
+            "TalhaTufan.VideoDownloaderPro")
+    except Exception:
+        pass
+
+    icon_path = resource_path("icon.ico")
     html_path = resource_path(os.path.join("webui", "web", "index.html"))
     window = webview.create_window(
         "Video Downloader Pro",
@@ -208,4 +218,10 @@ def run():
         background_color="#161826",
     )
     api.window = window
-    webview.start()
+
+    try:
+        # 'icon' penceresinin/görev çubuğunun simgesini uygular
+        webview.start(icon=icon_path)
+    except TypeError:
+        # Eski pywebview sürümleri 'icon' parametresini desteklemez
+        webview.start()

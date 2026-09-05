@@ -68,10 +68,11 @@
           <div>
             <div class="kicker" style="margin-bottom:12px">Biçim</div>
             <div class="fmt-grid" id="fmt-grid">
-              <div class="fmt-card" data-fmt="both"><div class="t">Video + Ses</div><div class="s">En yüksek kalite · MKV olabilir</div></div>
-              <div class="fmt-card" data-fmt="mp4"><div class="t">Sadece MP4</div><div class="s">Her yerde oynar · H.264</div></div>
-              <div class="fmt-card" data-fmt="mp3"><div class="t">Sadece Ses</div><div class="s">MP3 · 320 kbps</div></div>
+              <div class="fmt-card" data-fmt="both"><div class="t">Video</div><div class="s">En yüksek kalite · MP4 ya da MKV</div></div>
+              <div class="fmt-card" data-fmt="mp4"><div class="t">MP4</div><div class="s">Her cihazda oynar · H.264</div></div>
+              <div class="fmt-card" data-fmt="mp3"><div class="t">MP3</div><div class="s">Yalnızca ses · 320 kbps</div></div>
             </div>
+            <div class="fmt-note"><b>Video</b>, mevcut en yüksek kaliteyi indirir; YouTube yüksek çözünürlükte bunu genelde <b>MKV</b> olarak verir ve bazı oynatıcılarda/telefonlarda açılmayabilir. Her yerde sorunsuz oynasın istiyorsan <b>MP4</b>'ü seç (biraz daha düşük çözünürlük olabilir).</div>
           </div>
 
           <div>
@@ -131,6 +132,11 @@
             <div class="h">Motor güncellemesi hazır</div>
             <div class="b" id="engine-card-body"></div>
             <button class="btn btn-ghost" id="btn-restart" style="margin-top:11px;height:30px;padding:0 12px;font-size:12px">Yeniden başlat</button>
+          </div>
+          <div class="engine-card" id="app-card" hidden style="background:var(--color-accent-800)">
+            <div class="h">Uygulama güncellemesi hazır</div>
+            <div class="b" id="app-card-body"></div>
+            <button class="btn btn-ghost" id="btn-app-update" style="margin-top:11px;height:30px;padding:0 12px;font-size:12px">Güncelle ve yeniden başlat</button>
           </div>
           <div class="shortcuts">Kısayollar<br><b>Ctrl+V</b> yapıştır · <b>Enter</b> indir</div>
         </aside>

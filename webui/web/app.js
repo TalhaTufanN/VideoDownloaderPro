@@ -52,7 +52,7 @@ async function startDownload() {
   if (!state.path) { alert("Lütfen bir kayıt yeri seçin."); return; }
   state.running = true;
   $("active-title").textContent = "Sorgulanıyor...";
-  const tag = { both: "Video + Ses", mp4: "MP4", mp3: "MP3 320" }[state.format];
+  const tag = { both: "Video", mp4: "MP4", mp3: "MP3" }[state.format];
   const tagEl = $("active-tag"); tagEl.textContent = tag; tagEl.hidden = false;
   $("active-status").textContent = "1 işlem sürüyor";
   $("progress-label").textContent = "İndiriliyor · %0";
@@ -66,6 +66,7 @@ $("btn-download").addEventListener("click", startDownload);
 $("btn-browse").addEventListener("click", browse);
 $("url").addEventListener("keydown", e => { if (e.key === "Enter") startDownload(); });
 $("btn-restart").addEventListener("click", () => api().restart_app());
+$("btn-app-update").addEventListener("click", () => api().do_app_update());
 $("btn-clear-history").addEventListener("click", async () => {
   if (confirm("Tüm indirme geçmişi silinsin mi?\nDosyalarınız silinmez, yalnızca liste temizlenir.")) {
     const hist = await api().clear_history();
@@ -175,16 +176,18 @@ function applyState(s) {
     $("engine-card").hidden = false;
     $("sys-engine").textContent = s.engine_update;
   }
-  // Tek seferlik olaylar
-  if (s.error_msg) alert(s.error_msg);
-  if (s.app_update) {
-    if (confirm(`Video Downloader Pro'nun yeni bir sürümü (${s.app_update}) bulundu.\n\nŞimdi güncellenip yeniden başlatılsın mı?`)) {
-      api().do_app_update();
-    }
+  // Uygulama güncelleme kartı (kalıcı, tek tık ile kur)
+  if (s.app_update && s.app_update !== prev.app_update) {
+    $("app-card-body").textContent =
+      `Yeni sürüm ${s.app_update} indirilmeye hazır. Uygula ve otomatik yeniden başlat.`;
+    $("app-card").hidden = false;
   }
+  // Tek seferlik olay: hata
+  if (s.error_msg) alert(s.error_msg);
   Object.assign(prev, {
     status: s.status, pct: s.pct, title: s.title, thumb: s.thumb,
-    success: s.success, error: s.error, engine_update: s.engine_update,
+    success: s.success, error: s.error,
+    engine_update: s.engine_update, app_update: s.app_update,
   });
 }
 
@@ -226,4 +229,8 @@ async function init() {
   startPolling();
 }
 
-window.addEventListener("pywebviewready", init);
+function boot() { init().catch((e) => console.error("init hatası:", e)); }
+// pywebviewready bu betikten önce tetiklenmiş olabilir (yarış durumu);
+// API zaten hazırsa doğrudan başlat, değilse olayı bekle.
+if (window.pywebview && window.pywebview.api) boot();
+else window.addEventListener("pywebviewready", boot);
