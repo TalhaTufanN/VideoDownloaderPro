@@ -19,6 +19,33 @@
   --shadow-lg:0 16px 40px rgba(0,0,0,0.55);
 }
 
+/* ── Açık tema ─────────────────────────────────────────────────────────────
+   Nocturne token tabanlı olduğu için yalnızca değerleri yeniden tanımlıyoruz.
+   Nötr rampa aydınlıkta ters anlam kazanır: metin için koyu, kenarlık için
+   açık tonlar; vurgu rampasının "açık metin" adımları (100–300) koyu mora
+   döner ki açık yüzeyde okunsun. */
+body.light {
+  --color-bg:#eef0f6;
+  --color-text:#1b1d27;
+  --panel:#ffffff; --panel-alt:#f2f3f8; --rail:#f6f7fb; --sidebar:#e7e9f1;
+
+  --color-neutral-100:#1a1c26; --color-neutral-200:#262935; --color-neutral-300:#31343f;
+  --color-neutral-400:#4a4e5c; --color-neutral-500:#6b6f7e; --color-neutral-600:#7d8191;
+  --color-neutral-700:#aeb2c0; --color-neutral-800:#dbdee8; --color-neutral-900:#e6e8f1;
+
+  --color-accent-100:#2b2741; --color-accent-200:#3d3763; --color-accent-300:#5a4fa0;
+  --color-accent-400:#9a8fe0;
+  --color-accent-800:#e2ddf7; --color-accent-900:#ecebfb;
+
+  --shadow-sm:0 0 0 1px #e0e2ec;
+  --shadow-lg:0 16px 40px rgba(30,32,54,0.16);
+}
+body.light .main { background:linear-gradient(180deg,#ffffff 0%, var(--color-bg) 42%); }
+body.light .thumb { background:linear-gradient(135deg,#eceef6,#e0e3ee); }
+body.light .brand-logo { background:var(--color-accent-700); box-shadow:inset 0 0 0 1px var(--color-accent-600); }
+body.light ::-webkit-scrollbar-thumb { background:#c9cdda; border:2px solid transparent; background-clip:content-box; }
+body.light ::-webkit-scrollbar-thumb:hover { background:#b4b9c9; background-clip:content-box; }
+
 * { box-sizing:border-box; }
 [hidden] { display:none !important; }
 html,body { height:100%; }

@@ -1,6 +1,6 @@
 /* Video Downloader Pro — arayüz mantığı. Python tarafı ile
-   window.pywebview.api üzerinden konuşur; Python geri bildirimleri
-   window.app.on*() fonksiyonlarını evaluate_js ile çağırarak gönderir. */
+   window.pywebview.api üzerinden konuşur; Python geri bildirimlerini
+   arayüz poll() ile düzenli olarak okur. */
 
 const $ = (id) => document.getElementById(id);
 const api = () => window.pywebview.api;
@@ -77,10 +77,19 @@ $("btn-ffmpeg-help").addEventListener("click", () =>
   api().open_url("https://ffmpeg.org/download.html"));
 
 /* Theme segmented + toggles */
+function applyTheme(theme) {
+  let mode = theme;
+  if (theme === "System") {
+    mode = (window.matchMedia && window.matchMedia("(prefers-color-scheme: light)").matches)
+      ? "Light" : "Dark";
+  }
+  document.body.classList.toggle("light", mode === "Light");
+}
 document.querySelectorAll("#seg-theme .opt").forEach(o =>
   o.addEventListener("click", () => {
     document.querySelectorAll("#seg-theme .opt").forEach(x => x.classList.remove("sel"));
     o.classList.add("sel");
+    applyTheme(o.dataset.theme);
     api().set_setting("theme", o.dataset.theme);
   }));
 function wireToggle(id, key, onChange) {
@@ -217,6 +226,7 @@ async function init() {
   if (d.settings.auto_open_folder) $("tg-auto").classList.add("on");
   document.querySelectorAll("#seg-theme .opt").forEach(o =>
     o.classList.toggle("sel", o.dataset.theme === (d.settings.theme || "Dark")));
+  applyTheme(d.settings.theme || "Dark");
 
   // Help cards
   $("help-ffmpeg").textContent = d.ffmpeg_ok ? "Kurulu ve çalışıyor" : "Bulunamadı";
@@ -229,8 +239,20 @@ async function init() {
   startPolling();
 }
 
-function boot() { init().catch((e) => console.error("init hatası:", e)); }
-// pywebviewready bu betikten önce tetiklenmiş olabilir (yarış durumu);
-// API zaten hazırsa doğrudan başlat, değilse olayı bekle.
-if (window.pywebview && window.pywebview.api) boot();
-else window.addEventListener("pywebviewready", boot);
+// pywebview köprüsü (window.pywebview.api) olay veya betik zamanlamasından
+// bağımsız olarak hazır olana kadar yoklanır; init yalnızca bir kez çalışır.
+// API metotları hazır olana kadar (window.pywebview.api.get_initial) yoklanır;
+// init yalnızca bir kez çalışır. Bu, pywebviewready olayının betikten önce
+// tetiklendiği ya da köprünün geç kurulduğu durumlara karşı dayanıklıdır.
+let _booted = false;
+function boot() {
+  if (_booted) return;
+  if (!(window.pywebview && window.pywebview.api && window.pywebview.api.get_initial)) {
+    setTimeout(boot, 60);
+    return;
+  }
+  _booted = true;
+  init().catch((e) => console.error("init hatası:", e));
+}
+window.addEventListener("pywebviewready", boot);
+boot();

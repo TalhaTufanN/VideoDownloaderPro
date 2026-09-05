@@ -5,8 +5,12 @@ Windows'un yerleşik WebView2 (Edge) motoru yapar.
 
 İlerleme bildirimi ÇEKME (pull) yöntemiyle taşınır: indirme iş parçacığı
 yalnızca Python tarafındaki durumu günceller, arayüz bu durumu bir zamanlayıcı
-ile `poll()` üzerinden okur. Böylece arka plandan `evaluate_js` çağırmanın
-WebView2 ile yol açtığı iş parçacığı sorunları tamamen ortadan kalkar.
+ile `poll()` üzerinden okur.
+
+ÖNEMLİ: Bu sınıfın JS'e açılmasını İSTEMEDİĞİMİZ tüm nitelikleri alt çizgi (_)
+ile başlar. pywebview, js_api nesnesinin genel (public) niteliklerini özyinelemeli
+olarak tarar; `_window` gibi bir WebView2/.NET nesnesi public olsaydı tarama
+sonsuz özyinelemeye girip API kaydını (window.pywebview.api) tamamen bozardı.
 """
 
 import os
@@ -29,14 +33,14 @@ from utils.ytdlp_updater import start_background_update, get_active_version
 
 class Api:
     def __init__(self):
-        self.window = None
+        self._window = None
         self._update_url = None
         self._bg_started = False
         self._cur_type = ""
         self._cur_path = ""
         self._lock = threading.Lock()
         # Arayüzün poll() ile okuduğu paylaşılan durum
-        self.state = {
+        self._state = {
             "status": "idle",       # idle | running | success | error
             "title": "",
             "thumb": None,
@@ -44,10 +48,10 @@ class Api:
             "success": 0,
             "error": 0,
             "engine_update": None,  # yeni yt-dlp sürümü (kalıcı — kart)
-            "app_update": None,     # yeni uygulama sürümü (tek sefer)
+            "app_update": None,     # yeni uygulama sürümü (kalıcı — kart)
             "error_msg": None,      # hata mesajı (tek sefer)
         }
-        self.downloader = YouTubeDownloader(
+        self._downloader = YouTubeDownloader(
             progress_callback=self._on_progress,
             completion_callback=self._on_success,
             error_callback=self._on_error,
@@ -56,9 +60,9 @@ class Api:
 
     def _set(self, **kw):
         with self._lock:
-            self.state.update(kw)
+            self._state.update(kw)
 
-    # ── JS → Python ─────────────────────────────────────────────────────────
+    # ── JS → Python (public API) ─────────────────────────────────────────────
     def get_initial(self):
         settings = load_settings()
         data = {
@@ -72,8 +76,8 @@ class Api:
                 "theme": settings.get("theme", "Dark"),
             },
             "history": load_history(),
-            "success": self.state["success"],
-            "error": self.state["error"],
+            "success": self._state["success"],
+            "error": self._state["error"],
         }
         if not self._bg_started:
             self._bg_started = True
@@ -83,11 +87,10 @@ class Api:
 
     def poll(self):
         """Arayüzün zamanlayıcısı bunu çağırır. Tek seferlik hata mesajını
-        döndürdükten sonra temizler; kart durumları (motor/uygulama
-        güncellemesi) kalıcıdır."""
+        döndürdükten sonra temizler; kart durumları kalıcıdır."""
         with self._lock:
-            snap = dict(self.state)
-            self.state["error_msg"] = None
+            snap = dict(self._state)
+            self._state["error_msg"] = None
         return snap
 
     def get_history(self):
@@ -95,7 +98,7 @@ class Api:
 
     def choose_folder(self):
         try:
-            result = self.window.create_file_dialog(webview.FOLDER_DIALOG)
+            result = self._window.create_file_dialog(webview.FOLDER_DIALOG)
         except Exception as e:
             print(f"Klasör seçilemedi: {e}")
             return ""
@@ -117,7 +120,7 @@ class Api:
         self._cur_path = path
         self._set(status="running", pct=0, title="Sorgulanıyor...", thumb=None)
         threading.Thread(
-            target=self.downloader.download,
+            target=self._downloader.download,
             args=(url, path, audio_only, mp4_only),
             daemon=True,
         ).start()
@@ -158,7 +161,7 @@ class Api:
     def do_app_update(self):
         if not self._update_url:
             return
-        success, msg = perform_update(self._update_url)
+        success, _msg = perform_update(self._update_url)
         if success:
             self._destroy()
 
@@ -172,15 +175,15 @@ class Api:
     def _on_success(self, title):
         add_to_history(title, self._cur_path, self._cur_type)
         with self._lock:
-            self.state["success"] += 1
-            self.state.update(status="success", pct=100, title=title)
+            self._state["success"] += 1
+            self._state.update(status="success", pct=100, title=title)
         if get_setting("auto_open_folder"):
             self.open_folder(self._cur_path)
 
     def _on_error(self, msg):
         with self._lock:
-            self.state["error"] += 1
-            self.state.update(status="error", error_msg=msg)
+            self._state["error"] += 1
+            self._state.update(status="error", error_msg=msg)
 
     def _check_app_update(self):
         available, version, url = check_for_updates()
@@ -190,7 +193,7 @@ class Api:
 
     def _destroy(self):
         try:
-            self.window.destroy()
+            self._window.destroy()
         except Exception:
             pass
 
@@ -217,10 +220,10 @@ def run():
         min_size=(1040, 700),
         background_color="#161826",
     )
-    api.window = window
+    api._window = window
 
     try:
-        # 'icon' penceresinin/görev çubuğunun simgesini uygular
+        # 'icon' pencerenin/görev çubuğunun simgesini uygular
         webview.start(icon=icon_path)
     except TypeError:
         # Eski pywebview sürümleri 'icon' parametresini desteklemez
